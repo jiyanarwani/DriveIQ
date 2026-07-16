@@ -1,10 +1,10 @@
-# DriveIQ — AI-Powered Driving Analysis & Coaching Dashboard
+# DriveIQ — AI Powered Driving Analysis & Coaching Dashboard
 
 DriveIQ is a modern, comprehensive AI-powered platform designed to analyze driving runs, evaluate driver safety and efficiency, and provide real-time, context-aware coaching feedback. It leverages a hybrid system combining Computer Vision (CV), Machine Learning (ML), and Large Language Models (LLMs) to scan driver behavior and offer recommendations.
 
 ---
 
-## 🚀 Key Features
+## Key Features
 
 * **Computer Vision Processing**: Motion estimation with Optical Flow and vehicle/obstacle tracking via YOLOv8.
 * **Predictive ML scoring**: An XGBoost model classifies the severity of driving runs and generates safety scores based on telemetry features.
@@ -14,7 +14,7 @@ DriveIQ is a modern, comprehensive AI-powered platform designed to analyze drivi
 
 ---
 
-## 🛠️ Technology Stack
+## Technology Stack
 
 ### **Frontend**
 * **Framework**: React.js with Vite
@@ -35,7 +35,7 @@ DriveIQ is a modern, comprehensive AI-powered platform designed to analyze drivi
 
 ---
 
-## 📁 Repository Structure
+## Repository Structure
 
 ```text
 ├── backend/                # Flask REST API implementation
@@ -63,87 +63,3 @@ DriveIQ is a modern, comprehensive AI-powered platform designed to analyze drivi
 
 ---
 
-## ⚙️ Installation & Local Setup
-
-### **1. Prerequisites**
-Ensure you have the following installed:
-* [Python 3.9+](https://www.python.org/downloads/)
-* [Node.js (LTS)](https://nodejs.org/)
-* [MongoDB](https://www.mongodb.com/) (Local or Atlas cloud database)
-
----
-
-### **2. Backend Setup**
-
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/jiyanarwani/DriveIQ.git
-   cd DriveIQ
-   ```
-
-2. **Set up a Virtual Environment**:
-   ```bash
-   python -m venv .venv
-   # Activate on Windows (PowerShell):
-   .venv\Scripts\Activate.ps1
-   # Activate on macOS/Linux:
-   source .venv/bin/activate
-   ```
-
-3. **Install Dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Environment Variables**:
-   Create a `.env` file in the root directory:
-   ```env
-   MONGO_URI=mongodb://localhost:27017/DriveIQ
-   GEMINI_API_KEY=your_google_gemini_api_key_here
-   JWT_SECRET=your_jwt_secret_key_here
-   FLASK_DEBUG=1
-   ```
-
-5. **Start Flask Server**:
-   ```bash
-   python backend/app.py
-   ```
-   The backend will be available at `http://localhost:5000`.
-
----
-
-### **3. Frontend Setup**
-
-1. **Navigate to the frontend folder**:
-   ```bash
-   cd frontend
-   ```
-
-2. **Install node dependencies**:
-   ```bash
-   npm install
-   ```
-
-3. **Start the Vite development server**:
-   ```bash
-   npm run dev
-   ```
-   The web dashboard will start at `http://localhost:5173`.
-
----
-
-## 🔌 API Endpoints Reference
-
-| Method | Endpoint | Description | Auth Required |
-| :--- | :--- | :--- | :--- |
-| **GET** | `/api/health` | Service status health check | No |
-| **POST** | `/api/auth/register` | Register a new driver profile | No |
-| **POST** | `/api/auth/login` | Login to receive a JWT token | No |
-| **POST** | `/api/score` | Score a telemetry data frame | Yes |
-| **POST** | `/api/coach` | Fetch LLM-generated coaching recommendations | Yes |
-| **GET** | `/api/dashboard/metrics` | Retrieve user stats & weekly trip summaries | Yes |
-
----
-
-## 🛡️ License
-Distributed under the MIT License.
