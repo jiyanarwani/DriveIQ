@@ -1,0 +1,44 @@
+# DriveIQ — Python Dependencies
+# Install with: pip install -r requirements.txt
+
+# Data & ML
+pandas
+numpy
+scikit-learn
+joblib
+
+# XGBoost & SHAP
+xgboost
+shap
+
+# LLM Fine-tuning / Inference
+torch
+transformers
+datasets
+accelerate
+sentencepiece
+protobuf
+evaluate
+
+# Computer Vision
+ultralytics       # YOLOv8
+opencv-python
+
+# Flask Backend
+flask
+flask-cors
+
+# Claude API (coaching messages)
+anthropic
+
+# Google Gemini API (coaching + session summary)
+google-genai
+
+# Utilities
+python-dotenv
+matplotlib
+seaborn
+Pillow
+pymongo
+PyJWT
+bcrypt

@@ -1,0 +1,66 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+.vscode/
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# Logs and temp
+*.log
+*.tmp
+*.swp
+
+# Large model/data artifacts
+models/flan_t5_coach/
+models/*.pkl
+models/*.safetensors
+yolov8n.pt
+0009/
+0010/
+1001/
+
+# Frontend build
+frontend/node_modules/
+frontend/dist/
+
+# Project docs/analysis and dataset artifacts (local only)
+DriveIQ_Implementation_Plan.docx
+analysis.ipynb
+implementation.md
+strategy_before.md
+strategy_now.md
+*.csv
+data/
+artifacts/
+training-annotation/
+
+# Model binaries / checkpoints (keep training scripts in git, not weights)
+models/*.pth
+models/*.pt
+models/*.bin
+models/*.joblib
+models/*.onnx
+models/*.h5
+models/*.ckpt
+models/*.png
+
+# Misc local/test artifacts
+*.sqlite3
+*.db
+*.bak
