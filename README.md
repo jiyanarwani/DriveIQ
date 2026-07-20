@@ -1,22 +1,22 @@
-# DriveIQ — AI-Powered Driving Analysis & Coaching Dashboard
+# DriveIQ — AI Powered Driving Analysis & Coaching Dashboard
 
-DriveIQ is a modern, comprehensive AI-powered platform designed to analyze driving runs, evaluate driver safety and efficiency, and provide real-time, context-aware coaching feedback. It leverages a hybrid system combining Computer Vision (CV), Machine Learning (ML), and Large Language Models (LLMs) to scan driver behavior and offer recommendations.
+DriveIQ is a modern, comprehensive AI powered platform designed to analyze driving runs, evaluate driver safety and efficiency, and provide real-time, context aware coaching feedback. It leverages a hybrid system combining Computer Vision (CV), Machine Learning (ML) and Large Language Models (LLMs) to scan driver behavior and offer recommendations.
 
 ---
 
-## 🚀 Key Features
+## Key Features
 
 * **Computer Vision Processing**: Motion estimation with Optical Flow and vehicle/obstacle tracking via YOLOv8.
 * **Predictive ML Scoring**: An XGBoost model classifies the severity of driving runs and generates safety scores based on telemetry features.
 * **Generative AI Coaching**: Integration with Google Gemini (`gemini-2.5-flash` using the official `google-genai` SDK) translating telemetry analysis into practical, encouraging driving feedback.
 * **Async Video Review**: Upload driving videos for background processing (YOLO + Optical Flow + XGBoost) to generate detailed timeline stats.
-* **PDF Report Generation**: Download stylized PDF coaching reports containing journey performance metrics, Gemini feedback, and significant infraction timelines (built with ReportLab).
-* **Immersive Dashboard**: A React-based web interface showing interactive telemetry timelines, active infraction overlays, 3D visualizations, and performance statistics.
+* **PDF Report Generation**: Download stylized PDF coaching reports containing journey performance metrics, Gemini feedback and significant infraction timelines (built with ReportLab).
+* **Immersive Dashboard**: A React-based web interface showing interactive telemetry timelines, active infraction overlays, 3D visualizations and performance statistics.
 * **User Authentication & Trip History**: Custom secure JWT authentication backed by MongoDB to track historic sessions.
 
 ---
 
-## 🛠️ Technology Stack
+## Technology Stack
 
 ### **Frontend**
 * **Framework**: React.js with Vite
@@ -38,7 +38,7 @@ DriveIQ is a modern, comprehensive AI-powered platform designed to analyze drivi
 
 ---
 
-## 📁 Repository Structure
+## Repository Structure
 
 ```text
 ├── backend/                # FastAPI REST API implementation
@@ -66,94 +66,3 @@ DriveIQ is a modern, comprehensive AI-powered platform designed to analyze drivi
 └── README.md               # Project documentation (this file)
 ```
 
----
-
-## ⚙️ Installation & Local Setup
-
-### **1. Prerequisites**
-Ensure you have the following installed:
-* [Python 3.9+](https://www.python.org/downloads/)
-* [Node.js (LTS)](https://nodejs.org/)
-* [MongoDB](https://www.mongodb.com/) (Local or Atlas cloud database)
-
----
-
-### **2. Backend Setup**
-
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/jiyanarwani/DriveIQ.git
-   cd DriveIQ
-   ```
-
-2. **Set up a Virtual Environment**:
-   ```bash
-   python -m venv .venv
-   # Activate on Windows (PowerShell):
-   .venv\Scripts\Activate.ps1
-   # Activate on macOS/Linux:
-   source .venv/bin/activate
-   ```
-
-3. **Install Dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Environment Variables**:
-   Create a `.env` file in the root directory:
-   ```env
-   MONGO_URI=mongodb://localhost:27017/DriveIQ
-   GEMINI_API_KEY=your_google_gemini_api_key_here
-   JWT_SECRET=your_jwt_secret_key_here
-   DRIVEIQ_LOG_LEVEL=INFO
-   ```
-
-5. **Start FastAPI Server**:
-   ```bash
-   python backend/app.py
-   ```
-   The backend will be available at `http://localhost:5000`.
-
----
-
-### **3. Frontend Setup**
-
-1. **Navigate to the frontend folder**:
-   ```bash
-   cd frontend
-   ```
-
-2. **Install node dependencies**:
-   ```bash
-   npm install
-   ```
-
-3. **Start the Vite development server**:
-   ```bash
-   npm run dev
-   ```
-   The web dashboard will start at `http://localhost:5173`.
-
----
-
-## 🔌 API Endpoints Reference
-
-| Method | Endpoint | Description | Auth Required |
-| :--- | :--- | :--- | :--- |
-| **GET** | `/api/v1/health` | Diagnostics, system health & model status checks | No |
-| **POST** | `/api/v1/auth/register` | Create a new user profile with secure credentials | No |
-| **POST** | `/api/v1/auth/login` | Secure credentials login returning a JWT | No |
-| **POST** | `/api/v1/score` | Evaluate telemetry frame or real-time camera frames | Yes |
-| **POST** | `/api/v1/coach` | Fetch LLM-generated coaching recommendations | Yes |
-| **GET** | `/api/v1/dashboard/metrics` | Retrieve user stats & weekly trip summaries | Yes |
-| **POST** | `/api/v1/review` | Initiate background video analysis (Multipart video) | Yes |
-| **GET** | `/api/v1/review/status/{task_id}` | Check async video processing status & results | Yes |
-| **GET** | `/api/v1/review/report/{task_id}` | Download a formatted PDF evaluation and report | Yes |
-| **GET** | `/api/v1/trips/history` | Return user's saved trip history list from MongoDB | Yes |
-| **GET** | `/api/v1/trips/{session_id}/timeline` | Fetch granular timeline data for a saved session | Yes |
-
----
-
-## 🛡️ License
-Distributed under the MIT License.
