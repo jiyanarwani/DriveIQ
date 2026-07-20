@@ -1,20 +1,22 @@
-# DriveIQ — AI Powered Driving Analysis & Coaching Dashboard
+# DriveIQ — AI-Powered Driving Analysis & Coaching Dashboard
 
 DriveIQ is a modern, comprehensive AI-powered platform designed to analyze driving runs, evaluate driver safety and efficiency, and provide real-time, context-aware coaching feedback. It leverages a hybrid system combining Computer Vision (CV), Machine Learning (ML), and Large Language Models (LLMs) to scan driver behavior and offer recommendations.
 
 ---
 
-## Key Features
+## 🚀 Key Features
 
 * **Computer Vision Processing**: Motion estimation with Optical Flow and vehicle/obstacle tracking via YOLOv8.
-* **Predictive ML scoring**: An XGBoost model classifies the severity of driving runs and generates safety scores based on telemetry features.
-* **Generative AI Coaching**: Real-time integration with Google Gemini (`gemini-2.5-flash`) that translates telemetry analysis into practical, encouraging driving feedback.
-* **Immersive Dashboard**: A React-based web interface showing interactive telemetry timelines, 3D visualizations, and performance statistics.
+* **Predictive ML Scoring**: An XGBoost model classifies the severity of driving runs and generates safety scores based on telemetry features.
+* **Generative AI Coaching**: Integration with Google Gemini (`gemini-2.5-flash` using the official `google-genai` SDK) translating telemetry analysis into practical, encouraging driving feedback.
+* **Async Video Review**: Upload driving videos for background processing (YOLO + Optical Flow + XGBoost) to generate detailed timeline stats.
+* **PDF Report Generation**: Download stylized PDF coaching reports containing journey performance metrics, Gemini feedback, and significant infraction timelines (built with ReportLab).
+* **Immersive Dashboard**: A React-based web interface showing interactive telemetry timelines, active infraction overlays, 3D visualizations, and performance statistics.
 * **User Authentication & Trip History**: Custom secure JWT authentication backed by MongoDB to track historic sessions.
 
 ---
 
-## Technology Stack
+## 🛠️ Technology Stack
 
 ### **Frontend**
 * **Framework**: React.js with Vite
@@ -32,18 +34,21 @@ DriveIQ is a modern, comprehensive AI-powered platform designed to analyze drivi
   * SHAP (Model interpretability visualization)
 * **GenAI / LLMs**: Google GenAI SDK (Gemini API) and Anthropic SDK (Claude API integration ready)
 * **Security**: JWT (`PyJWT`), `bcrypt`
+* **Report Generation**: ReportLab (PDF)
 
 ---
 
-## Repository Structure
+## 📁 Repository Structure
 
 ```text
 ├── backend/                # FastAPI REST API implementation
 │   ├── routes/             # API Endpoints (auth, health, score, review, dashboard, coach)
 │   ├── app.py              # API server entrypoint
 │   ├── auth.py             # User JWT/auth helper functions
+│   ├── config.py           # Central configuration using Pydantic Settings
 │   ├── db.py               # MongoDB database manager
 │   ├── model_loader.py     # Loader for pretrained ML models
+│   ├── schemas.py          # Unified Pydantic schema validation models
 │   ├── scoring.py          # Processing metrics and scoring engine
 │   └── coach_llm.py        # Google Gemini API connector for coaching
 ├── frontend/               # React + Vite client-side dashboard
@@ -136,12 +141,17 @@ Ensure you have the following installed:
 
 | Method | Endpoint | Description | Auth Required |
 | :--- | :--- | :--- | :--- |
-| **GET** | `/api/health` | Service status health check | No |
-| **POST** | `/api/auth/register` | Register a new driver profile | No |
-| **POST** | `/api/auth/login` | Login to receive a JWT token | No |
-| **POST** | `/api/score` | Score a telemetry data frame | Yes |
-| **POST** | `/api/coach` | Fetch LLM-generated coaching recommendations | Yes |
-| **GET** | `/api/dashboard/metrics` | Retrieve user stats & weekly trip summaries | Yes |
+| **GET** | `/api/v1/health` | Diagnostics, system health & model status checks | No |
+| **POST** | `/api/v1/auth/register` | Create a new user profile with secure credentials | No |
+| **POST** | `/api/v1/auth/login` | Secure credentials login returning a JWT | No |
+| **POST** | `/api/v1/score` | Evaluate telemetry frame or real-time camera frames | Yes |
+| **POST** | `/api/v1/coach` | Fetch LLM-generated coaching recommendations | Yes |
+| **GET** | `/api/v1/dashboard/metrics` | Retrieve user stats & weekly trip summaries | Yes |
+| **POST** | `/api/v1/review` | Initiate background video analysis (Multipart video) | Yes |
+| **GET** | `/api/v1/review/status/{task_id}` | Check async video processing status & results | Yes |
+| **GET** | `/api/v1/review/report/{task_id}` | Download a formatted PDF evaluation and report | Yes |
+| **GET** | `/api/v1/trips/history` | Return user's saved trip history list from MongoDB | Yes |
+| **GET** | `/api/v1/trips/{session_id}/timeline` | Fetch granular timeline data for a saved session | Yes |
 
 ---
 
