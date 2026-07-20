@@ -1,36 +1,34 @@
-"""
-backend/routes/review.py
-POST /api/review
-Multipart field: video (mp4)
-"""
-
-from __future__ import annotations
-
 import json
 import logging
 import os
 import tempfile
 import time
+import uuid
+import shutil
 from pathlib import Path
+from typing import Any
 
 import cv2
 import numpy as np
 import pandas as pd
-from flask import Blueprint, current_app, jsonify, request
+from fastapi import APIRouter, File, UploadFile, Form, BackgroundTasks, HTTPException, status
 
 from cv.cv_pipeline import feature_vector_for_xgb
 from pipeline.video_dataset_builder import aggregate_windows
 from backend.scoring import score_window, score_windows_with_ema, event_to_issue_key
+from backend.model_loader import load_models
+from backend.schemas import ReviewInitResponse, ReviewStatusResponse
 
-review_bp = Blueprint("review", __name__)
+review_router = APIRouter(prefix="/api/v1")
 CV_DEBUG = os.environ.get("DRIVEIQ_CV_DEBUG", "0") == "1"
 logger = logging.getLogger("driveiq.review")
 
-# Static dictionary removed, now uses centralized rule engine
-
-
 GREEN_THRESHOLD = 80.0
 YELLOW_THRESHOLD = 65.0
+
+# Global dictionary to track background review tasks
+_review_tasks: dict[str, dict[str, Any]] = {}
+
 
 def classify_severity(score):
     if score >= GREEN_THRESHOLD:
@@ -53,19 +51,16 @@ def _generate_session_summary_gemini(windows: list[dict], duration_sec: float) -
 
         client = genai.Client(api_key=api_key)
 
-        # Aggregate stats from windows
         scores = [float(w.get("score", 0)) for w in windows]
         avg_score = sum(scores) / max(len(scores), 1)
         min_score = min(scores) if scores else 0
         max_score = max(scores) if scores else 0
 
-        # Count events
         event_counts: dict[str, int] = {}
         for w in windows:
             for ev in w.get("events", []):
                 event_counts[ev] = event_counts.get(ev, 0) + 1
 
-        # Aggregate feature averages (from coach_note context)
         feature_keys = ["mean_flow", "flow_variance", "low_motion_ratio", "proximity_score"]
         feature_avgs = {}
         for fk in feature_keys:
@@ -96,19 +91,17 @@ def _generate_session_summary_gemini(windows: list[dict], duration_sec: float) -
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=0.1,
-                max_output_tokens=2048,  # FIX: was 512/1000, causing truncation mid-response
+                max_output_tokens=2048,
                 response_mime_type="application/json",
                 response_schema={
                     "type": "object",
                     "properties": {
                         "overall_rating": {
                             "type": "string",
-                            # FIX: enum constraint prevents unexpected values and reduces token usage
                             "enum": ["Excellent", "Good", "Needs Improvement", "Poor"]
                         },
                         "what_went_well": {
                             "type": "array",
-                            # FIX: maxLength enforced at schema level, not just via prompt instruction
                             "items": {"type": "string", "maxLength": 80},
                             "minItems": 2,
                             "maxItems": 3
@@ -121,7 +114,6 @@ def _generate_session_summary_gemini(windows: list[dict], duration_sec: float) -
                         },
                         "summary_paragraph": {
                             "type": "string",
-                            # FIX: hard cap on paragraph length keeps total JSON well under 2048 tokens
                             "maxLength": 300
                         }
                     },
@@ -132,7 +124,6 @@ def _generate_session_summary_gemini(windows: list[dict], duration_sec: float) -
 
         raw_text = response.text.strip()
 
-        # Strip any accidental markdown fences Gemini may still emit
         if raw_text.startswith("```"):
             raw_text = raw_text.split("```")[-2] if "```" in raw_text[3:] else raw_text
             raw_text = raw_text.lstrip("`").lstrip("json").strip()
@@ -141,10 +132,9 @@ def _generate_session_summary_gemini(windows: list[dict], duration_sec: float) -
             parsed = json.loads(raw_text)
             return {"summary": parsed, "error": None}
         except json.JSONDecodeError:
-            # Last-resort: try to recover a truncated JSON object by closing it
             recovered = _try_recover_truncated_json(raw_text)
             if recovered:
-                logger.warning("/api/review gemini_summary_recovered via truncation fix")
+                logger.warning("/api/v1/review gemini_summary_recovered via truncation fix")
                 return {"summary": recovered, "error": None}
 
             logger.warning(f"Gemini session summary JSON parse failed. Raw: {raw_text[:200]}...")
@@ -156,11 +146,6 @@ def _generate_session_summary_gemini(windows: list[dict], duration_sec: float) -
 
 
 def _try_recover_truncated_json(raw: str) -> dict | None:
-    """
-    Best-effort recovery for a truncated JSON object from Gemini.
-    Tries progressively shorter suffixes to close the object validly.
-    Only accepts results that contain all four required keys.
-    """
     required_keys = {"overall_rating", "what_went_well", "areas_to_improve", "summary_paragraph"}
     closers = ['"}]}', '"]}', '"}', ']}}', '}}', '}']
     for closer in closers:
@@ -182,7 +167,7 @@ def _extract_review_fast_features(
     """Review extractor using the real CV pipeline (YOLO + optical flow)."""
     from cv.cv_pipeline import cv_pipeline
     from cv.optical_flow import reset_flow_state
-    reset_flow_state()  # Clear acceleration state between videos
+    reset_flow_state()
 
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
@@ -224,12 +209,9 @@ def _extract_review_fast_features(
         actual_frame_idx = int(round(actual_ts_sec * fps))
 
         try:
-            # Use the same CV pipeline as the live /api/score endpoint
             cv_feats = cv_pipeline(frame, prev_frame, telemetry={})
         except Exception as e:
-            print("CV PIPELINE FAILED!!!!", type(e), repr(e))
             logger.error(f"cv_pipeline error: {e}")
-            # Fallback to zero features if CV pipeline fails on a frame
             cv_feats = {
                 "mean_flow": 0.0, "flow_variance": 0.0,
                 "braking_ratio": 0.0, "lane_change_ratio": 0.0,
@@ -245,7 +227,6 @@ def _extract_review_fast_features(
                 "source_dir": video_path.parent.name,
                 "frame_idx": actual_frame_idx,
                 "timestamp_sec": actual_ts_sec,
-                # 8-feature schema from real CV pipeline
                 "mean_flow": float(cv_feats.get("mean_flow", 0.0)),
                 "flow_variance": float(cv_feats.get("flow_variance", cv_feats.get("variance", 0.0))),
                 "braking_ratio": float(cv_feats.get("braking_ratio", cv_feats.get("braking_flag", 0.0))),
@@ -254,7 +235,6 @@ def _extract_review_fast_features(
                 "vehicle_density": float(cv_feats.get("vehicle_density", cv_feats.get("vehicle_count", 0.0))),
                 "pedestrian_ratio": float(cv_feats.get("pedestrian_ratio", cv_feats.get("pedestrian_flag", 0.0))),
                 "low_motion_ratio": float(cv_feats.get("low_motion_ratio", 0.0)),
-                # Legacy keys
                 "vehicle_count": float(cv_feats.get("vehicle_count", cv_feats.get("vehicle_density", 0.0))),
                 "braking_flag": float(cv_feats.get("braking_flag", cv_feats.get("braking_ratio", 0.0))),
                 "lane_change_flag": float(cv_feats.get("lane_change_flag", cv_feats.get("lane_change_ratio", 0.0))),
@@ -275,7 +255,7 @@ def _extract_review_fast_features(
 
     if timeline_gap_count > 0:
         logger.warning(
-            "/api/review timeline_gaps_detected video=%s count=%s max_gap_sec=%.3f",
+            "/api/v1/review timeline_gaps_detected video=%s count=%s max_gap_sec=%.3f",
             video_path.name,
             timeline_gap_count,
             max_gap_sec,
@@ -314,46 +294,45 @@ def _evaluate_rules(score: float, features: dict, events: list[str]) -> list[str
     return tips
 
 
-@review_bp.route("/api/review", methods=["POST"])
-def review():
+# ── Background Task processing ──────────────────────────────────────────────
+
+def _process_video_task(task_id: str, temp_path: Path, scoring_mode: str) -> None:
     t0 = time.perf_counter()
-    logger.info("/api/review start")
-    video_file = request.files.get("video")
-    if video_file is None:
-        return jsonify({"error": "missing_video", "message": "Field 'video' is required"}), 400
+    logger.info(f"Background task {task_id} started processing")
 
-    if not video_file.filename:
-        return jsonify({"error": "empty_video", "message": "Uploaded video is empty"}), 400
-
-    scoring_mode = request.form.get("scoring_mode", "event_rules")  # "event_rules" or "xgboost"
-
-    temp_path: Path | None = None
     try:
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-            temp_path = Path(tmp.name)
-            video_file.save(str(temp_path))
-        logger.info("/api/review upload_saved path=%s size_bytes=%s", temp_path, temp_path.stat().st_size)
-
-        t_extract = time.perf_counter()
         sample_every = 3
         window_size = 20
         stride = 15
 
         frames_df = _extract_review_fast_features(temp_path, sample_every=sample_every, max_frames_per_video=None)
         logger.info(
-            "/api/review extract_done rows=%s elapsed_ms=%.1f",
+            "Task %s extract_done rows=%s elapsed_ms=%.1f",
+            task_id,
             len(frames_df),
-            (time.perf_counter() - t_extract) * 1000.0,
+            (time.perf_counter() - t0) * 1000.0,
         )
         if frames_df.empty:
-            return jsonify({"windows": [], "duration_sec": 0.0, "window_count": 0})
+            _review_tasks[task_id] = {
+                "status": "completed",
+                "error": None,
+                "result": {
+                    "windows": [],
+                    "duration_sec": 0.0,
+                    "window_count": 0,
+                    "severity_thresholds": {
+                        "mode": "static",
+                        "yellow_min": YELLOW_THRESHOLD,
+                        "green_min": GREEN_THRESHOLD,
+                    },
+                    "session_summary": {"summary": None, "error": "empty_video"},
+                }
+            }
+            return
 
         t_windows = time.perf_counter()
-        # Reduce overlap from 75% to 25% for more independent window scores.
         windows_df = aggregate_windows(frames_df, window_size=window_size, stride=stride)
 
-        # Skip windows with excessive missing sampled frames.
-        # Estimate sampled-frame continuity from actual frame index span.
         if not windows_df.empty:
             span_frames = (windows_df["window_end_frame"] - windows_df["window_start_frame"]).astype(float)
             observed_slots = np.maximum(1.0, np.floor(span_frames / float(sample_every)) + 1.0)
@@ -364,30 +343,48 @@ def review():
             dropped_windows = windows_df[windows_df["missing_frame_ratio"] > 0.30]
             if not dropped_windows.empty:
                 logger.warning(
-                    "/api/review skipped_windows_missing_frames count=%s threshold=0.30 max_ratio=%.3f",
+                    "Task %s skipped_windows_missing_frames count=%s threshold=0.30 max_ratio=%.3f",
+                    task_id,
                     len(dropped_windows),
                     float(dropped_windows["missing_frame_ratio"].max()),
                 )
                 windows_df = windows_df[windows_df["missing_frame_ratio"] <= 0.30].reset_index(drop=True)
 
         logger.info(
-            "/api/review windows_done rows=%s elapsed_ms=%.1f",
+            "Task %s windows_done rows=%s elapsed_ms=%.1f",
+            task_id,
             len(windows_df),
             (time.perf_counter() - t_windows) * 1000.0,
         )
+        
         if windows_df.empty:
             duration_sec = float(frames_df["timestamp_sec"].max()) if "timestamp_sec" in frames_df.columns else 0.0
-            return jsonify({"windows": [], "duration_sec": round(duration_sec, 3), "window_count": 0})
+            _review_tasks[task_id] = {
+                "status": "completed",
+                "error": None,
+                "result": {
+                    "windows": [],
+                    "duration_sec": round(duration_sec, 3),
+                    "window_count": 0,
+                    "severity_thresholds": {
+                        "mode": "static",
+                        "yellow_min": YELLOW_THRESHOLD,
+                        "green_min": GREEN_THRESHOLD,
+                    },
+                    "session_summary": {"summary": None, "error": "empty_windows"},
+                }
+            }
+            return
+
         rows_iter = [r for _, r in windows_df.iterrows()]
         duration_sec = float(frames_df["timestamp_sec"].max()) if "timestamp_sec" in frames_df.columns else 0.0
 
-        models = current_app.config.get("MODELS", {})
+        models = load_models()
         xgb = models.get("xgb")
         scaler = models.get("scaler")
         scoring_path = "xgb" if xgb is not None and scaler is not None else "heuristic"
-        logger.info("/api/review scoring_path=%s", scoring_path)
+        logger.info("Task %s scoring_path=%s", task_id, scoring_path)
 
-        # Build feature dicts for all windows
         windows_out = []
         t_score = time.perf_counter()
         all_feature_dicts = []
@@ -407,20 +404,14 @@ def review():
             }
             all_feature_dicts.append((row, feature_dict))
 
-        # Score all windows based on the requested scoring mode
         use_xgb = scoring_mode == "xgboost" and xgb is not None and scaler is not None
         actual_score_source = "xgboost" if use_xgb else "event_ema"
-        logger.info("/api/review scoring_mode_requested=%s actual=%s", scoring_mode, actual_score_source)
 
         if use_xgb:
-            # XGBoost scoring with EMA smoothing
             from cv.cv_pipeline import feature_vector_for_xgb
-            prev_smoothed_xgb = 90.0  # BASE_SCORE
+            prev_smoothed_xgb = 90.0
             for i, (row, feature_dict) in enumerate(all_feature_dicts):
-                # Get events from event engine for timeline
                 _, events = score_window(feature_dict)
-
-                # XGBoost prediction
                 try:
                     xgb_input = feature_vector_for_xgb(feature_dict, scaler)
                     raw_score = float(xgb.predict(xgb_input)[0])
@@ -429,7 +420,6 @@ def review():
                     logger.warning(f"XGBoost predict failed for window {i}: {e}")
                     raw_score, _ = score_window(feature_dict)
 
-                # EMA smoothing
                 smoothed = 0.6 * raw_score + 0.4 * prev_smoothed_xgb
                 smoothed = max(0.0, min(100.0, smoothed))
                 prev_smoothed_xgb = smoothed
@@ -449,9 +439,7 @@ def review():
                     "events": events,
                 })
         else:
-            # Event-based deduction scoring with EMA
             scored = score_windows_with_ema([fd for _, fd in all_feature_dicts])
-
             for i, (row, feature_dict) in enumerate(all_feature_dicts):
                 result = scored[i]
                 score_val = result["smoothed_score"]
@@ -473,22 +461,19 @@ def review():
                 })
 
         logger.info(
-            "/api/review score_done rows=%s elapsed_ms=%.1f",
+            "Task %s score_done rows=%s elapsed_ms=%.1f",
+            task_id,
             len(windows_out),
             (time.perf_counter() - t_score) * 1000.0,
         )
 
-        if CV_DEBUG and windows_out:
-            logger.info("/api/review sample_window=%s", windows_out[0])
-
-        logger.info("/api/review done elapsed_ms=%.1f", (time.perf_counter() - t0) * 1000.0)
-
-        # Generate Gemini-powered session summary
         session_summary = _generate_session_summary_gemini(windows_out, duration_sec)
-        logger.info("/api/review session_summary error=%s", session_summary.get("error"))
+        logger.info("Task %s session_summary error=%s", task_id, session_summary.get("error"))
 
-        return jsonify(
-            {
+        _review_tasks[task_id] = {
+            "status": "completed",
+            "error": None,
+            "result": {
                 "windows": windows_out,
                 "duration_sec": round(duration_sec, 3),
                 "window_count": len(windows_out),
@@ -499,10 +484,233 @@ def review():
                 },
                 "session_summary": session_summary,
             }
-        )
+        }
+        logger.info(f"Background task {task_id} completed successfully in {(time.perf_counter() - t0):.1f}s")
+    except Exception as ex:
+        logger.exception(f"Background task {task_id} failed: {ex}")
+        _review_tasks[task_id] = {
+            "status": "failed",
+            "error": str(ex),
+            "result": None
+        }
     finally:
-        if temp_path is not None and temp_path.exists():
+        if temp_path.exists():
             try:
                 temp_path.unlink()
-            except Exception:
-                pass
+                logger.info(f"Temporary file {temp_path} deleted for task {task_id}")
+            except Exception as clean_ex:
+                logger.error(f"Error cleaning up temporary file {temp_path}: {clean_ex}")
+
+
+@review_router.post("/review", response_model=ReviewInitResponse)
+async def review_video(
+    background_tasks: BackgroundTasks,
+    video: UploadFile = File(...),
+    scoring_mode: str = Form("event_rules")
+) -> dict:
+    logger.info("Multipart review upload received.")
+    
+    if not video.filename:
+        raise HTTPException(status_code=400, detail="Uploaded video is empty")
+
+    task_id = str(uuid.uuid4())
+    _review_tasks[task_id] = {
+        "status": "processing",
+        "error": None,
+        "result": None
+    }
+
+    try:
+        # Create a persistent temporary file on disk (deleted after execution completes)
+        temp_fd, temp_path_str = tempfile.mkstemp(suffix=".mp4")
+        os.close(temp_fd)  # close descriptor, write with shutil
+        
+        temp_path = Path(temp_path_str)
+        with temp_path.open("wb") as buffer:
+            shutil.copyfileobj(video.file, buffer)
+            
+        logger.info("Saved review video to temporary file: %s (%s bytes)", temp_path, temp_path.stat().st_size)
+    except Exception as io_err:
+        logger.error(f"Failed to save uploaded video file: {io_err}")
+        _review_tasks[task_id] = {
+            "status": "failed",
+            "error": f"Failed to save uploaded video: {io_err}",
+            "result": None
+        }
+        return {"task_id": task_id, "status": "failed"}
+
+    # Enqueue background task
+    background_tasks.add_task(_process_video_task, task_id, temp_path, scoring_mode)
+    
+    return {"task_id": task_id, "status": "processing"}
+
+
+@review_router.get("/review/status/{task_id}", response_model=ReviewStatusResponse)
+def get_review_status(task_id: str) -> dict:
+    task = _review_tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+        
+    return {
+        "task_id": task_id,
+        "status": task["status"],
+        "error": task["error"],
+        "result": task["result"]
+    }
+
+
+@review_router.get("/review/report/{task_id}")
+def export_review_report(task_id: str):
+    from fastapi.responses import StreamingResponse
+    from io import BytesIO
+    from reportlab.lib.pagesizes import letter
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib import colors
+
+    task = _review_tasks.get(task_id)
+    if not task or task["status"] != "completed":
+        raise HTTPException(status_code=404, detail="Task not found or not completed")
+    
+    result = task["result"]
+    windows = result["windows"]
+    duration_sec = result["duration_sec"]
+    session_summary = result["session_summary"]
+    
+    scores = [w["score"] for w in windows]
+    avg_score = sum(scores) / len(scores) if scores else 0
+    min_score = min(scores) if scores else 0
+    
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=54, leftMargin=54, topMargin=54, bottomMargin=54)
+    styles = getSampleStyleSheet()
+    
+    title_style = ParagraphStyle(
+        'DocTitle',
+        parent=styles['Heading1'],
+        fontSize=24,
+        leading=28,
+        textColor=colors.HexColor('#1A365D'),
+        spaceAfter=15
+    )
+    
+    subtitle_style = ParagraphStyle(
+        'DocSubtitle',
+        parent=styles['Normal'],
+        fontSize=12,
+        leading=16,
+        textColor=colors.HexColor('#4A5568'),
+        spaceAfter=25
+    )
+    
+    section_heading = ParagraphStyle(
+        'SectionHeading',
+        parent=styles['Heading2'],
+        fontSize=16,
+        leading=20,
+        textColor=colors.HexColor('#2B6CB0'),
+        spaceBefore=15,
+        spaceAfter=10
+    )
+    
+    body_style = ParagraphStyle(
+        'DocBody',
+        parent=styles['Normal'],
+        fontSize=10,
+        leading=14,
+        textColor=colors.HexColor('#2D3748'),
+        spaceAfter=10
+    )
+    
+    story = []
+    
+    story.append(Paragraph("DriveIQ — Driver Coaching & Performance Report", title_style))
+    story.append(Paragraph(f"Generated on {time.strftime('%Y-%m-%d %H:%M:%S')} | Session ID: {task_id}", subtitle_style))
+    story.append(Spacer(1, 10))
+    
+    story.append(Paragraph("1. Journey Performance Metrics", section_heading))
+    data = [
+        ["Metric", "Value"],
+        ["Overall Average Score", f"{avg_score:.1f} / 100"],
+        ["Lowest Window Score", f"{min_score:.1f} / 100"],
+        ["Total Duration Evaluated", f"{duration_sec:.1f} seconds"],
+        ["Total Evaluation Windows", f"{len(windows)} segments"],
+    ]
+    t = Table(data, colWidths=[200, 250])
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#2B6CB0')),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+        ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+        ('BOTTOMPADDING', (0,0), (-1,0), 8),
+        ('TOPPADDING', (0,0), (-1,0), 8),
+        ('GRID', (0,0), (-1,-1), 1, colors.HexColor('#E2E8F0')),
+        ('BACKGROUND', (0,1), (-1,-1), colors.HexColor('#F7FAFC')),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0,0), (-1,0), 10),
+        ('FONTSIZE', (0,1), (-1,-1), 9),
+        ('TOPPADDING', (0,1), (-1,-1), 6),
+        ('BOTTOMPADDING', (0,1), (-1,-1), 6),
+    ]))
+    story.append(t)
+    story.append(Spacer(1, 20))
+    
+    story.append(Paragraph("2. AI Coaching Insights & Feedback", section_heading))
+    if session_summary and session_summary.get("summary"):
+        summary_data = session_summary["summary"]
+        rating = summary_data.get("overall_rating", "N/A")
+        para = summary_data.get("summary_paragraph", "")
+        
+        story.append(Paragraph(f"<b>Overall Rating:</b> {rating}", body_style))
+        story.append(Paragraph(f"<b>Executive Summary:</b> {para}", body_style))
+        story.append(Spacer(1, 5))
+        
+        story.append(Paragraph("<b>What Went Well:</b>", body_style))
+        for item in summary_data.get("what_went_well", []):
+            story.append(Paragraph(f"• {item}", body_style))
+        story.append(Spacer(1, 5))
+            
+        story.append(Paragraph("<b>Areas to Improve:</b>", body_style))
+        for item in summary_data.get("areas_to_improve", []):
+            story.append(Paragraph(f"• {item}", body_style))
+    else:
+        story.append(Paragraph("AI Coaching Summary is unavailable (fallback rule-based active).", body_style))
+    story.append(Spacer(1, 20))
+    
+    story.append(Paragraph("3. Significant Segment & Infraction Timeline", section_heading))
+    timeline_data = [["Timestamp (sec)", "Score", "Dominant Event / Issue", "Coaching Suggestion"]]
+    
+    critical_windows = [w for w in windows if w["score"] < 80 or w.get("events")]
+    if not critical_windows:
+        critical_windows = windows[:15]
+    else:
+        critical_windows = critical_windows[:25]
+        
+    for w in critical_windows:
+        time_str = f"{w['timestamp_sec']:.1f}s"
+        score_str = f"{w['score']:.1f}"
+        top_issue = w.get("top_issue", "None") or "None"
+        note = w.get("coach_note", "Maintain smooth driving.")
+        timeline_data.append([time_str, score_str, top_issue.replace('_', ' '), note])
+        
+    t_timeline = Table(timeline_data, colWidths=[80, 50, 120, 200])
+    t_timeline.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#4A5568')),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+        ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E0')),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0,0), (-1,0), 9),
+        ('FONTSIZE', (0,1), (-1,-1), 8),
+        ('TOPPADDING', (0,0), (-1,-1), 4),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+    ]))
+    story.append(t_timeline)
+    
+    doc.build(story)
+    buffer.seek(0)
+    
+    return StreamingResponse(
+        buffer,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=driveiq_report_{task_id}.pdf"}
+    )

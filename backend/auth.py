@@ -1,49 +1,31 @@
 import jwt
 from datetime import datetime, timedelta
-import os
-from dotenv import load_dotenv
-from functools import wraps
-from flask import request, jsonify
+from fastapi import Depends, HTTPException, Security
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from backend.config import settings
 
+security = HTTPBearer(auto_error=False)
 
-load_dotenv()
-
-SECRET = os.getenv("JWT_SECRET")
-if not SECRET:
-    raise RuntimeError("Missing required env var: JWT_SECRET")
-if len(SECRET) < 32:
-    raise RuntimeError("JWT_SECRET must be at least 32 characters long")
-
-def generate_token(user_id):
+def generate_token(user_id: str) -> str:
     return jwt.encode({
         "user_id": user_id,
         "exp": datetime.utcnow() + timedelta(days=7)
-    }, SECRET, algorithm="HS256")
+    }, settings.jwt_secret, algorithm="HS256")
 
-def verify_token(token):
+def verify_token(token: str) -> str | None:
     try:
-        payload = jwt.decode(token, SECRET, algorithms=["HS256"])
-        return payload["user_id"]
-    except:
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+        return payload.get("user_id")
+    except Exception:
         return None
 
-def token_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        token = None
-        if "Authorization" in request.headers:
-            auth_header = request.headers["Authorization"]
-            if auth_header.startswith("Bearer "):
-                token = auth_header.split(" ")[1]
-
-        if not token:
-            return jsonify({"error": "Token is missing"}), 401
-
-        user_id = verify_token(token)
-        if not user_id:
-            return jsonify({"error": "Token is invalid"}), 401
-
-        current_user = {"_id": user_id}
-        return f(current_user, *args, **kwargs)
-
-    return decorated
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+    if not credentials:
+        raise HTTPException(status_code=401, detail="Token is missing")
+    
+    token = credentials.credentials
+    user_id = verify_token(token)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Token is invalid")
+    
+    return {"_id": user_id}

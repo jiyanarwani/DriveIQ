@@ -24,9 +24,11 @@ evaluate
 ultralytics       # YOLOv8
 opencv-python
 
-# Flask Backend
-flask
-flask-cors
+# FastAPI Backend
+fastapi
+uvicorn
+python-multipart
+pydantic-settings
 
 # Claude API (coaching messages)
 anthropic
@@ -42,3 +44,4 @@ Pillow
 pymongo
 PyJWT
 bcrypt
+reportlab

@@ -23,7 +23,7 @@ DriveIQ is a modern, comprehensive AI-powered platform designed to analyze drivi
 * **API Client**: Axios
 
 ### **Backend**
-* **Framework**: Flask (Python) with CORS
+* **Framework**: FastAPI (Python) with CORS
 * **Database**: MongoDB (via `pymongo`)
 * **Machine Learning & CV**:
   * XGBoost & scikit-learn (Scoring model)
@@ -38,7 +38,7 @@ DriveIQ is a modern, comprehensive AI-powered platform designed to analyze drivi
 ## 📁 Repository Structure
 
 ```text
-├── backend/                # Flask REST API implementation
+├── backend/                # FastAPI REST API implementation
 │   ├── routes/             # API Endpoints (auth, health, score, review, dashboard, coach)
 │   ├── app.py              # API server entrypoint
 │   ├── auth.py             # User JWT/auth helper functions
@@ -101,10 +101,10 @@ Ensure you have the following installed:
    MONGO_URI=mongodb://localhost:27017/DriveIQ
    GEMINI_API_KEY=your_google_gemini_api_key_here
    JWT_SECRET=your_jwt_secret_key_here
-   FLASK_DEBUG=1
+   DRIVEIQ_LOG_LEVEL=INFO
    ```
 
-5. **Start Flask Server**:
+5. **Start FastAPI Server**:
    ```bash
    python backend/app.py
    ```

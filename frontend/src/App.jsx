@@ -19,7 +19,7 @@ import { Chart as ChartJS, BarElement, CategoryScale, LinearScale, Tooltip, Lege
 
 ChartJS.register(BarElement, CategoryScale, LinearScale, Tooltip, Legend)
 
-const API = ''   // empty = same origin (Vite proxy to Flask)
+const API = ''   // empty = same origin (Vite proxy to FastAPI)
 const POLL_MS = 2500
 const HEALTH_POLL_MS = 15000
 const BACKEND_FAIL_THRESHOLD = 3
@@ -215,7 +215,7 @@ export default function App() {
     }
 
     try {
-      const { data } = await axios.get(`${API}/api/health`)
+      const { data } = await axios.get(`${API}/api/v1/health`)
       healthFailCountRef.current = 0
       setOfflineMode(false)
       setHealthMeta({
@@ -302,7 +302,7 @@ export default function App() {
     }
 
     try {
-      const { data } = await axios.post(`${API}/api/score`, {
+      const { data } = await axios.post(`${API}/api/v1/score`, {
         telemetry,
         session_id: sessionIdRef.current,
         session_started_at: sessionStartedAtRef.current,
@@ -502,7 +502,16 @@ export default function App() {
         </div>
 
         <nav className="sidebar-nav">
-          <button className="nav-item" onClick={() => scrollToSection('overview')}>
+          <button
+            className={`nav-item ${currentView === 'history' ? 'active' : ''}`}
+            onClick={() => {
+              setCurrentView('history')
+              setTimeout(() => {
+                const target = document.getElementById('main-dashboard')
+                if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+              }, 100)
+            }}
+          >
             <span className="nav-icon">01</span>
             <span>Overview</span>
           </button>
@@ -636,7 +645,17 @@ export default function App() {
                     <h2 className="section-title">Trip Review</h2>
                     <p className="panel-subtitle">Upload a drive and navigate structured modules, lessons, and video moments.</p>
                   </div>
-                  <button className="btn" onClick={() => window.alert('Report export coming soon')}>
+                  <button
+                    className="btn"
+                    onClick={() => {
+                      if (reviewResult?.task_id) {
+                        window.open(`${API}/api/v1/review/report/${reviewResult.task_id}`, '_blank')
+                      } else {
+                        window.alert('No report available. Please complete an analysis first.')
+                      }
+                    }}
+                    disabled={!reviewResult}
+                  >
                     Export Report
                   </button>
                 </div>

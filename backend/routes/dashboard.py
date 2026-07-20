@@ -1,14 +1,17 @@
-from flask import Blueprint, jsonify, request
-from backend.auth import token_required
+import logging
+from fastapi import APIRouter, Depends, HTTPException
+from backend.auth import get_current_user
 from backend.db import get_dashboard_metrics
+from backend.schemas import DashboardMetricsResponse
 
-dashboard_bp = Blueprint("dashboard", __name__)
+logger = logging.getLogger("driveiq.routes.dashboard")
+dashboard_router = APIRouter(prefix="/api/v1/dashboard")
 
-@dashboard_bp.route("/metrics", methods=["GET"])
-@token_required
-def get_metrics(current_user):
+@dashboard_router.get("/metrics", response_model=DashboardMetricsResponse)
+def get_metrics(current_user: dict = Depends(get_current_user)) -> dict:
     try:
         metrics = get_dashboard_metrics(current_user["_id"])
-        return jsonify(metrics), 200
+        return metrics
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Dashboard metrics retrieval failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

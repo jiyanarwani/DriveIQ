@@ -12,7 +12,7 @@ export default function LoginPanel({ onLogin, onClose }) {
     e.preventDefault()
     setError('')
     setLoading(true)
-    const endpoint = isRegister ? '/api/auth/register' : '/api/auth/login'
+    const endpoint = isRegister ? '/api/v1/auth/register' : '/api/v1/auth/login'
     try {
       const res = await axios.post(endpoint, { email, password })
       if (res.data.token) onLogin(res.data.token)

@@ -1,14 +1,9 @@
 """
 backend/app.py
-DriveIQ Flask API entry point.
+DriveIQ FastAPI API entry point.
 
 Start with:
-    cd /Users/jatinankushnimje/Documents/Coding/driveiq_practice
-    source .venv/bin/activate
     python backend/app.py
-
-Or with gunicorn (production):
-    gunicorn -w 2 -b 0.0.0.0:5000 backend.app:app
 """
 
 import sys
@@ -22,7 +17,7 @@ os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 import logging
-import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 # ── Ensure project root is on sys.path ────────────────────────────────────────
@@ -31,47 +26,81 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 # CRITICAL: Import torch BEFORE cv2 to ensure torch's libomp loads first.
-# On macOS Apple Silicon, if cv2 loads its libomp first and torch loads a
-# different copy later, the process segfaults.
 try:
     import torch
     torch.set_num_threads(1)
-except ImportError:
+except (ImportError, OSError):
     pass
 
-from flask import Flask
-from flask_cors import CORS
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
 
+from backend.config import settings
 from backend.model_loader import load_models
-from backend.routes.health  import health_bp
-from backend.routes.score   import score_bp
-from backend.routes.coach   import coach_bp
-from backend.routes.review  import review_bp
-from backend.routes.auth    import auth_bp
-from backend.routes.dashboard import dashboard_bp
+from backend.routes.health import health_router
+from backend.routes.score import score_router
+from backend.routes.coach import coach_router
+from backend.routes.review import review_router
+from backend.routes.auth import auth_router
+from backend.routes.dashboard import dashboard_router
+
+# Configure logging at application entry point
+log_level = settings.log_level.upper()
+logging.basicConfig(
+    level=getattr(logging, log_level, logging.INFO),
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s"
+)
+logger = logging.getLogger("driveiq.app")
 
 
-def create_app() -> Flask:
-    app = Flask(__name__)
-    CORS(app, origins=["http://localhost:5173", "http://localhost:3000"])
-
-    # Load ML models once at startup
-    app.config["MODELS"] = load_models()
-
-    # Pre-warm YOLO so it doesn't lazy-load mid-request and race with cv2
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup phase: Load ML models and pre-warm YOLO
+    logger.info("Initializing models on startup...")
+    load_models()
+    
     try:
         from cv.yolo_pipeline import get_yolo_model
         get_yolo_model()
+        logger.info("✅ YOLO model pre-warmed.")
     except Exception as e:
-        logging.getLogger("driveiq.app").warning(f"YOLO pre-warm failed (non-fatal): {e}")
+        logger.warning(f"YOLO pre-warm failed (non-fatal): {e}")
 
-    # Register blueprints
-    app.register_blueprint(health_bp)
-    app.register_blueprint(score_bp)
-    app.register_blueprint(coach_bp)
-    app.register_blueprint(review_bp)
-    app.register_blueprint(auth_bp, url_prefix="/api/auth")
-    app.register_blueprint(dashboard_bp, url_prefix="/api/dashboard")
+    yield
+
+    # Shutdown phase:
+    logger.info("Shutting down FastAPI app...")
+
+
+def create_app() -> FastAPI:
+    app = FastAPI(
+        title="DriveIQ API",
+        version=settings.api_version,
+        lifespan=lifespan
+    )
+
+    # CORS configuration
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:5173", "http://localhost:3000"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # Register FastAPI Routers
+    app.include_router(health_router)
+    app.include_router(score_router)
+    app.include_router(coach_router)
+    app.include_router(review_router)
+    app.include_router(auth_router)
+    app.include_router(dashboard_router)
+
+    from fastapi.responses import RedirectResponse
+    @app.get("/", include_in_schema=False)
+    def redirect_to_docs():
+        return RedirectResponse(url="/docs")
 
     return app
 
@@ -79,16 +108,9 @@ def create_app() -> Flask:
 app = create_app()
 
 if __name__ == "__main__":
-    log_level = os.environ.get("DRIVEIQ_LOG_LEVEL", "INFO").upper()
-    logging.basicConfig(level=getattr(logging, log_level, logging.INFO), format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
-    port = int(os.environ.get("PORT", 5000))
-    debug = os.environ.get("FLASK_DEBUG", "0") == "1"
-    print(f"\n DriveIQ API running on http://localhost:{port}")
-    print("   Endpoints:")
-    print("     GET  /api/health")
-    print("     POST /api/score")
-    print("     POST /api/coach")
-    print("     POST /api/review")
-
-    # Production: gunicorn -w 1 -b 0.0.0.0:5000 backend.app:app
-    app.run(host="0.0.0.0", port=port, debug=debug)
+    port = settings.port
+    logger.info(f"Starting DriveIQ FastAPI API on http://localhost:{port}")
+    logger.info(f"Open Swagger UI docs at http://localhost:{port}/docs")
+    
+    # Run the server
+    uvicorn.run("backend.app:app", host="0.0.0.0", port=port, log_level=log_level.lower())

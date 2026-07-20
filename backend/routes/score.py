@@ -1,23 +1,19 @@
-"""
-backend/routes/score.py
-POST /api/score
-"""
-
-from __future__ import annotations
-
 import base64
 import numpy as np
 import time
 import uuid
 import logging
+from typing import Any
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 
-from flask import Blueprint, request, jsonify, current_app
 from backend.db import save_session, sessions_collection
-from backend.auth import verify_token, token_required
+from backend.auth import verify_token, get_current_user
 from backend.scoring import score_window, EMA_ALPHA, BASE_SCORE
+from backend.model_loader import load_models
+from backend.schemas import ScoreRequest, ScoreResponse, TripHistoryItem, TimelineFrame
 
 logger = logging.getLogger("driveiq.routes.score")
-score_bp = Blueprint("score", __name__)
+score_router = APIRouter(prefix="/api/v1")
 
 INACTIVE_TIMEOUT_SEC = 300  # 5 minutes
 EMA_RESET_GAP_SEC = 30  # reset live EMA when stream is idle for this long
@@ -29,6 +25,7 @@ _LAST_ACTIVITY_BY_SESSION: dict[str, float] = {}
 _LAST_SCORE_TS_BY_SESSION: dict[str, float] = {}
 _SESSION_START_TOKEN_BY_SESSION: dict[str, str] = {}
 
+
 def _decode_frame(b64_str: str) -> np.ndarray | None:
     try:
         import cv2
@@ -37,6 +34,7 @@ def _decode_frame(b64_str: str) -> np.ndarray | None:
         return cv2.imdecode(arr, cv2.IMREAD_COLOR)
     except Exception:
         return None
+
 
 def _vision_like_features_from_telemetry(telemetry: dict) -> dict:
     speed = float(telemetry.get("speed", 0.0))
@@ -66,6 +64,7 @@ def _vision_like_features_from_telemetry(telemetry: dict) -> dict:
         "weather_id": 0,
     }
 
+
 def _heuristic_score_from_features(features: dict) -> float:
     score = 85.0
     score -= float(features.get("proximity_score", 0.0)) * 30.0
@@ -76,12 +75,13 @@ def _heuristic_score_from_features(features: dict) -> float:
     return max(0.0, min(100.0, score))
 
 
-def _resolve_session(payload: dict) -> str:
+def _resolve_session(payload: ScoreRequest, x_session_id: str | None = None) -> str:
     """Explicit session definition using explicit key, falling back explicitly to unique UUID."""
-    sid = payload.get("session_id") or request.headers.get("X-Session-Id")
+    sid = payload.session_id or x_session_id
     if not sid:
         sid = f"temp-{uuid.uuid4()}"
     return str(sid)
+
 
 def _cleanup_inactive_sessions():
     """Buffer memory leak prevention mapping bounds and timeouts."""
@@ -109,24 +109,26 @@ def _cleanup_inactive_sessions():
             _SESSION_START_TOKEN_BY_SESSION.pop(sid, None)
 
 
-
-@score_bp.route("/api/score", methods=["POST"])
-def score():
+@score_router.post("/score", response_model=ScoreResponse)
+def score(
+    payload: ScoreRequest,
+    authorization: str | None = Header(None),
+    x_session_id: str | None = Header(None),
+    x_session_started_at: str | None = Header(None)
+) -> dict:
     try:
         _cleanup_inactive_sessions()
         
-        data = request.get_json(silent=True) or {}
-        telemetry = data.get("telemetry", {})
-        frame_b64 = data.get("frame_b64")
-        prev_frame_b64 = data.get("prev_frame_b64")
-        scoring_mode = data.get("scoring_mode", "event_rules")  # "event_rules" or "xgboost"
-        session_id = _resolve_session(data)
+        telemetry = payload.telemetry
+        frame_b64 = payload.frame_b64
+        prev_frame_b64 = payload.prev_frame_b64
+        scoring_mode = payload.scoring_mode
+        session_id = _resolve_session(payload, x_session_id)
         now_ts = time.time()
         _LAST_ACTIVITY_BY_SESSION[session_id] = now_ts
 
         # Optional stream/session start token from client.
-        # If this token changes while session_id is reused, reset EMA state immediately.
-        session_start_token = data.get("session_started_at") or request.headers.get("X-Session-Started-At")
+        session_start_token = payload.session_started_at or x_session_started_at
         session_start_token = str(session_start_token) if session_start_token is not None else ""
         existing_start_token = _SESSION_START_TOKEN_BY_SESSION.get(session_id)
         if existing_start_token is None:
@@ -137,31 +139,33 @@ def score():
             _LAST_SCORE_TS_BY_SESSION.pop(session_id, None)
             _PREV_FRAME_BY_SESSION.pop(session_id, None)
         
-        auth_header = request.headers.get("Authorization")
         user_id = None
         auth_failed = False
         auth_error = None
-        token_present = bool(auth_header and auth_header.startswith("Bearer "))
+        token_present = bool(authorization and authorization.startswith("Bearer "))
         if token_present:
-            token = auth_header.split(" ")[1]
+            token = authorization.split(" ")[1]
             user_id = verify_token(token)
-            logger.info(f"Auth check: user_id={user_id}, token_present={auth_header is not None}")
+            logger.info(f"Auth check: user_id={user_id}, token_present=True")
             if user_id is None:
                 auth_failed = True
                 auth_error = "invalid_or_expired_token"
-                logger.warning("Auth failed for /api/score: invalid_or_expired_token")
-        elif auth_header:
+                logger.warning("Auth failed for /api/v1/score: invalid_or_expired_token")
+        elif authorization:
             auth_failed = True
             auth_error = "malformed_authorization_header"
-            logger.warning("Auth failed for /api/score: malformed_authorization_header")
+            logger.warning("Auth failed for /api/v1/score: malformed_authorization_header")
 
         # Fail fast if runtime schema/model state is invalid.
-        models = current_app.config.get("MODELS", {})
+        models = load_models()
         if not bool(models.get("schema_valid", False)):
-            return jsonify({
-                "error": "schema_mismatch",
-                "details": models.get("schema_error"),
-            }), 503
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "schema_mismatch",
+                    "details": models.get("schema_error"),
+                }
+            )
         
         cv_features = _vision_like_features_from_telemetry(telemetry)
         if frame_b64:
@@ -184,7 +188,6 @@ def score():
 
         feature_dict = {**telemetry, **cv_features}
         
-        # (6) Before any inference, replace NaN with 0, clip ratios to [0,1]
         ratio_keys = {"braking_ratio", "lane_change_ratio", "proximity_score", "pedestrian_ratio", "low_motion_ratio"}
         for k, v in feature_dict.items():
             if isinstance(v, (int, float)):
@@ -193,10 +196,10 @@ def score():
                 elif k in ratio_keys:
                     feature_dict[k] = max(0.0, min(1.0, float(v)))
         
-        # Always detect events for the timeline (regardless of scoring mode)
+        # Always detect events for the timeline
         _, events = score_window(feature_dict)
 
-        # Choose scoring path based on client request
+        # Choose scoring path
         score_source = "event_rules"
         if scoring_mode == "xgboost":
             xgb = models.get("xgb")
@@ -220,12 +223,10 @@ def score():
             raw_score, _ = score_window(feature_dict)
 
         # Apply per-session EMA smoothing for live mode stability.
-        # Reset EMA when idle gap is too long (new segment) or when session_id is first seen.
         last_score_ts = _LAST_SCORE_TS_BY_SESSION.get(session_id)
         if last_score_ts is None or (now_ts - last_score_ts) > EMA_RESET_GAP_SEC:
             prev_score = BASE_SCORE
             _PREV_SCORE_BY_SESSION.pop(session_id, None)
-            # Reset optical flow acceleration state for the new session
             try:
                 from cv.optical_flow import reset_flow_state
                 reset_flow_state()
@@ -250,10 +251,9 @@ def score():
                 session_saved = True
             except Exception as e:
                 session_save_error = str(e)
-                logger.error("Session save failed for /api/score: %s", e)
+                logger.error("Session save failed for /api/v1/score: %s", e)
 
-        # Standard Payload Output Guaranteed Complete explicitly referencing rules
-        return jsonify({
+        return {
             "score": round(score_val, 2),
             "eco_score": round(score_val, 2),
             "features": feature_dict,
@@ -262,26 +262,27 @@ def score():
             "auth_error": auth_error,
             "session_saved": session_saved,
             "session_save_error": session_save_error,
-        })
+        }
+    except HTTPException:
+        raise
     except Exception as general_err:
         logger.error(f"Score systemic failure -> {general_err}")
-        return jsonify({
-            "error": "internal_error",
-        }), 500  # Changed from 200
+        raise HTTPException(status_code=500, detail="Internal server error")
 
-@score_bp.route("/api/trips/history", methods=["GET"])
-@token_required
-def get_trip_history(current_user):
+
+@score_router.get("/trips/history", response_model=list[TripHistoryItem])
+def get_trip_history(current_user: dict = Depends(get_current_user)) -> list:
     user_id = current_user["_id"]
     
     trips = list(sessions_collection.find({"user_id": user_id}).sort("start_time", -1).limit(50))
     
+    out_trips = []
     for trip in trips:
-        if "_id" in trip:
-            del trip["_id"]
-        
-        trip["date"] = trip.get("start_time")
-        trip["frame_count"] = trip.get("frame_count", len(trip.get("frames", [])))
+        trip_data = {}
+        trip_data["session_id"] = trip.get("session_id")
+        trip_data["user_id"] = str(trip.get("user_id"))
+        trip_data["final_score"] = float(trip.get("final_score", 0.0))
+        trip_data["frame_count"] = trip.get("frame_count", len(trip.get("frames", [])))
         
         all_events = []
         for f in trip.get("frames", []):
@@ -291,40 +292,53 @@ def get_trip_history(current_user):
             elif isinstance(evs, str):
                 all_events.append(evs)
                 
-        trip["top_event"] = max(set(all_events), key=all_events.count) if all_events else "none"
-        trip["total_events"] = len(all_events)
+        trip_data["top_event"] = max(set(all_events), key=all_events.count) if all_events else "none"
+        trip_data["total_events"] = len(all_events)
         
-        if "frames" in trip:
-            del trip["frames"]
-        if "start_time" in trip:
-            del trip["start_time"]
-        if "end_time" in trip:
-            del trip["end_time"]
+        # Format dates to ISO strings
+        start_time = trip.get("start_time")
+        if start_time:
+            trip_data["date"] = start_time.isoformat()
+        else:
+            trip_data["date"] = None
             
-    return jsonify(trips), 200
+        out_trips.append(trip_data)
+        
+    return out_trips
 
-@score_bp.route("/api/trips/<session_id>/timeline", methods=["GET"])
-@token_required
-def get_trip_timeline(current_user, session_id):
+
+@score_router.get("/trips/{session_id}/timeline", response_model=list[TimelineFrame])
+def get_trip_timeline(session_id: str, current_user: dict = Depends(get_current_user)) -> list:
     user_id = current_user["_id"]
     
     trip = sessions_collection.find_one({"user_id": user_id, "session_id": session_id})
     if not trip:
-        return jsonify({"error": "trip_not_found"}), 404
+        raise HTTPException(status_code=404, detail="Trip not found")
         
     frames = trip.get("frames", [])
+    out_frames = []
         
     for f in frames:
-        if "timestamp" in f and f["timestamp"]:
-            f["timestamp_sec"] = f["timestamp"].timestamp()
-            del f["timestamp"]
-        
-        score = f.get("score", 0)
-        if score >= 80:
-            f["severity"] = "green"
-        elif score >= 65:
-            f["severity"] = "yellow"
+        frame_data = {}
+        ts = f.get("timestamp")
+        if ts:
+            frame_data["timestamp_sec"] = ts.timestamp()
         else:
-            f["severity"] = "red"
+            frame_data["timestamp_sec"] = 0.0
             
-    return jsonify(frames), 200
+        score_val = float(f.get("score", 0.0))
+        frame_data["score"] = score_val
+        frame_data["eco_score"] = float(f.get("eco_score", score_val))
+        frame_data["features"] = f.get("features", {})
+        frame_data["events"] = f.get("events", [])
+        
+        if score_val >= 80:
+            frame_data["severity"] = "green"
+        elif score_val >= 65:
+            frame_data["severity"] = "yellow"
+        else:
+            frame_data["severity"] = "red"
+            
+        out_frames.append(frame_data)
+            
+    return out_frames

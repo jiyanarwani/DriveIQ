@@ -19,7 +19,7 @@ export default function MainDashboard({ token, offlineMode }) {
   useEffect(() => {
     if (!token || offlineMode) return
 
-    axios.get('/api/dashboard/metrics', {
+    axios.get('/api/v1/dashboard/metrics', {
       headers: { Authorization: `Bearer ${token}` }
     })
     .then(res => {
@@ -29,7 +29,7 @@ export default function MainDashboard({ token, offlineMode }) {
       console.error('Failed to fetch dashboard metrics', err)
     })
 
-    axios.get('/api/trips/history', {
+    axios.get('/api/v1/trips/history', {
       headers: { Authorization: `Bearer ${token}` }
     })
     .then(res => {
@@ -60,7 +60,7 @@ export default function MainDashboard({ token, offlineMode }) {
         tripDetailsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
       }, 100)
       
-      axios.get(`/api/trips/${sessionId}/timeline`, {
+      axios.get(`/api/v1/trips/${sessionId}/timeline`, {
         headers: { Authorization: `Bearer ${token}` }
       })
       .then(res => {
@@ -85,7 +85,7 @@ export default function MainDashboard({ token, offlineMode }) {
             pedestrian_flag: totalPedestrians > 0 ? 1 : 0
           }
           
-          axios.post('/api/coach', {
+          axios.post('/api/v1/coach', {
             score: trip.final_score,
             features: aggFeatures,
             events: [trip.top_event],

@@ -1,18 +1,20 @@
-"""
-backend/routes/health.py
-GET /api/health — liveness probe
-"""
-import os
-from flask import Blueprint, jsonify
-from flask import current_app
+import time
+import logging
+from fastapi import APIRouter
+from backend.config import settings
+from backend.model_loader import load_models
+from backend.db import is_mongo_available
+from backend.schemas import HealthResponse
 
-health_bp = Blueprint("health", __name__)
+# Record startup time for uptime calculation
+START_TIME = time.time()
 
+logger = logging.getLogger("driveiq.routes.health")
+health_router = APIRouter(prefix="/api/v1/health")
 
-@health_bp.route("/api/health", methods=["GET"])
-def health():
-    models = current_app.config.get("MODELS", {})
-    # Current primary path: XGBoost scoring with schema validation. LSTM predictor is optional.
+@health_router.get("", response_model=HealthResponse)
+def health_check() -> dict:
+    models = load_models()
     core_required = ["xgb", "scaler"]
 
     core_models_loaded = all(models.get(k) is not None for k in core_required)
@@ -21,14 +23,26 @@ def health():
 
     models_loaded = core_models_loaded and schema_valid
 
-    # Coach is purely deterministic/rule-based natively now
     coach_ready = True
     score_ready = models_loaded
     overall_ready = score_ready and coach_ready
     degraded = not overall_ready or not predictor_loaded
 
-    return jsonify({
-        "status": "ok",
+    # Check MongoDB status
+    mongo_ok, mongo_error = is_mongo_available()
+
+    # Check GPU availability
+    gpu_available = False
+    try:
+        import torch
+        gpu_available = torch.cuda.is_available()
+    except Exception:
+        pass
+
+    uptime = time.time() - START_TIME
+
+    return {
+        "status": "ok" if not degraded else "degraded",
         "service": "DriveIQ API",
         "models_loaded": models_loaded,
         "core_models_loaded": core_models_loaded and schema_valid,
@@ -42,5 +56,8 @@ def health():
         "coach_disabled": False,
         "ready": overall_ready,
         "degraded": degraded,
-        "version": os.environ.get("DRIVEIQ_API_VERSION", "v1"),
-    })
+        "version": settings.api_version,
+        "uptime_seconds": round(uptime, 2),
+        "mongodb_connected": mongo_ok,
+        "gpu_available": gpu_available
+    }

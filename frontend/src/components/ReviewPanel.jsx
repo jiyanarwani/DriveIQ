@@ -177,6 +177,7 @@ export default function ReviewPanel({ onAnalysisComplete, onWindowSelect, select
   const [result, setResult] = useState(null)
   const [expandedModules, setExpandedModules] = useState({})
   const [previewPlayback, setPreviewPlayback] = useState({ current: 0, duration: 0 })
+  const [statusMessage, setStatusMessage] = useState('Analysing...')
 
   const videoRef = useRef(null)
 
@@ -226,25 +227,57 @@ export default function ReviewPanel({ onAnalysisComplete, onWindowSelect, select
     }
 
     setLoading(true)
+    setStatusMessage('Uploading and initializing analysis...')
     setError('')
     setResult(null)
 
     try {
       const form = new FormData()
       form.append('video', file)
-      const { data } = await axios.post('/api/review', form, {
+      form.append('scoring_mode', 'xgboost')
+      const initRes = await axios.post('/api/v1/review', form, {
         headers: { 'Content-Type': 'multipart/form-data' },
       })
 
-      const segments = groupSegments(data?.windows || [])
-      const nextResult = { ...data, segments }
-      setResult(nextResult)
-      if (onAnalysisComplete) onAnalysisComplete(nextResult)
-      if (onWindowSelect && segments.length) onWindowSelect(segments[0])
+      const taskId = initRes.data.task_id
+      if (!taskId) {
+        throw new Error('No task ID returned from server.')
+      }
+
+      setStatusMessage('Video uploaded. Analyzing computer vision features...')
+      
+      const pollInterval = 1500
+      const pollTask = async () => {
+        try {
+          const statusRes = await axios.get(`/api/v1/review/status/${taskId}`)
+          const { status: taskStatus, error: taskError, result: taskResult } = statusRes.data
+
+          if (taskStatus === 'completed') {
+            const segments = groupSegments(taskResult?.windows || [])
+            const nextResult = { ...taskResult, segments, task_id: taskId }
+            setResult(nextResult)
+            if (onAnalysisComplete) onAnalysisComplete(nextResult)
+            if (onWindowSelect && segments.length) onWindowSelect(segments[0])
+            setLoading(false)
+          } else if (taskStatus === 'failed') {
+            setError(taskError || 'Analysis failed in background.')
+            setLoading(false)
+          } else {
+            setStatusMessage('Processing video frames (running YOLO & optical flow)...')
+            setTimeout(pollTask, pollInterval)
+          }
+        } catch (pollErr) {
+          const msg = pollErr?.response?.data?.detail?.message || pollErr?.response?.data?.detail || pollErr?.response?.data?.error || 'Error polling analysis status.'
+          setError(msg)
+          setLoading(false)
+        }
+      }
+
+      setTimeout(pollTask, pollInterval)
+
     } catch (e) {
-      const msg = e?.response?.data?.message || e?.response?.data?.error || 'Analysis failed.'
+      const msg = e?.response?.data?.detail?.message || e?.response?.data?.detail || e?.response?.data?.message || e?.response?.data?.error || 'Upload failed.'
       setError(msg)
-    } finally {
       setLoading(false)
     }
   }
@@ -273,7 +306,7 @@ export default function ReviewPanel({ onAnalysisComplete, onWindowSelect, select
         >
           {loading ? 'Analysing...' : 'Analyse'}
         </button>
-        {loading ? <span className="text-mute">Processing extraction windows...</span> : null}
+        {loading ? <span className="text-mute">{statusMessage}</span> : null}
       </div>
 
       {error ? <div className="form-error">{error}</div> : null}

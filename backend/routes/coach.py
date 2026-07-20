@@ -1,27 +1,18 @@
-"""
-backend/routes/coach.py
-POST /api/coach
-Body: { "score": float, "features": dict, "events": [str] }
-
-Returns: { "message": str, "tips": [str], "severity": str, "source": str }
-
-Uses Flan-T5-Small for dynamic coaching text generation.
-Falls back to deterministic rules if the model is unavailable.
-"""
-
-from __future__ import annotations
 import time
 import logging
-from flask import Blueprint, request, jsonify
+import random
+from typing import Any
+from fastapi import APIRouter, Header, HTTPException
 
 from backend.coach_llm import generate_coaching_tip, is_model_loaded
 from backend.scoring import score_window
 from backend.db import trip_summaries_collection
+from backend.schemas import CoachRequest, CoachResponse
 
 logger = logging.getLogger("driveiq.coach")
-coach_bp = Blueprint("coach", __name__)
+coach_router = APIRouter(prefix="/api/v1/coach")
 
-_tip_cache: dict = {}
+_tip_cache: dict[str, dict[str, Any]] = {}
 COACH_CACHE_TTL_SEC = 120
 COACH_CACHE_MAX = 256
 
@@ -37,7 +28,7 @@ def _cache_key(score: float, features: dict, session_id: str = "") -> str:
     return f"s{score_bucket}|b{braking}|l{lane}|prox{proximity}|sid{sid}"
 
 
-def _cache_get(key: str):
+def _cache_get(key: str) -> dict | None:
     entry = _tip_cache.get(key)
     if not entry:
         return None
@@ -49,7 +40,7 @@ def _cache_get(key: str):
     return payload
 
 
-def _cache_set(key: str, payload: dict):
+def _cache_set(key: str, payload: dict) -> None:
     if len(_tip_cache) >= COACH_CACHE_MAX and key not in _tip_cache:
         oldest_key = min(_tip_cache, key=lambda k: _tip_cache[k].get("ts", 0.0))
         _tip_cache.pop(oldest_key, None)
@@ -65,8 +56,6 @@ def _severity_from_score(score: float) -> str:
         return "yellow"
     return "red"
 
-
-import random
 
 # ── Rule-based fallback tips ────────────────────────────────────────────────
 
@@ -109,7 +98,6 @@ def _evaluate_rules(score: float, features: dict, events: list[str]) -> list[str
             "Pedestrians detected: reduce speed immediately."
         ]))
 
-    # New rules for Optical Flow features (mean_flow and low_motion_ratio)
     mean_flow = float(features.get("mean_flow", 0.0))
     flow_variance = float(features.get("flow_variance", 0.0))
     low_motion_ratio = float(features.get("low_motion_ratio", 0.0))
@@ -134,22 +122,27 @@ def _evaluate_rules(score: float, features: dict, events: list[str]) -> list[str
 
 # ── Main endpoint ───────────────────────────────────────────────────────────
 
-@coach_bp.route("/api/coach", methods=["POST"])
-def coach():
-    data = request.get_json(silent=True) or {}
-    score = float(data.get("score", 50.0))
-    features = data.get("features", {})
-    session_id = str(data.get("session_id", "") or request.headers.get("X-Session-Id", ""))
-    is_summary = bool(data.get("is_summary"))
+@coach_router.post("", response_model=CoachResponse)
+def coach(payload: CoachRequest, x_session_id: str | None = Header(None)) -> dict:
+    score = payload.score
+    features = payload.features
+    session_id = str(payload.session_id or x_session_id or "")
+    is_summary = payload.is_summary
 
     if is_summary and session_id:
         from backend.db import sessions_collection
         db_doc = sessions_collection.find_one({"session_id": session_id})
         if db_doc and isinstance(db_doc.get("tips"), list) and len(db_doc["tips"]) > 0:
-            return jsonify({"tips": db_doc["tips"]})
+            severity = _severity_from_score(score)
+            return {
+                "message": "Summary coaching tips loaded.",
+                "tips": db_doc["tips"],
+                "severity": severity,
+                "source": "db_summary",
+                "model_loaded": is_model_loaded(),
+            }
 
-    # Detect events from features if not provided
-    events = data.get("events")
+    events = payload.events
     if events is None:
         _, events = score_window(features)
 
@@ -160,29 +153,27 @@ def coach():
     if not is_summary:
         cached = _cache_get(cache_key)
         if cached:
-            return jsonify(cached)
+            # Add missing model_loaded field if cache payload doesn't have it
+            cached["model_loaded"] = is_model_loaded()
+            return cached
 
     try:
-        # Try Flan-T5 first
+        # Try Flan-T5 / Gemini
         llm_tip, source = generate_coaching_tip(score, severity, events, features)
 
         if llm_tip and source == "gemini":
             tips = [llm_tip]
-            # Add one rule-based tip as backup variety
             rule_tips = _evaluate_rules(score, features, events)
             if rule_tips and rule_tips[0] != tips[0]:
                 tips.append(rule_tips[0])
         else:
-            # LLM unavailable — full rule-based fallback
             tips = _evaluate_rules(score, features, events)
             source = "cv_rules"
 
-        # Ensure at least 1 tip, at most 3
         if not tips:
             tips = ["Your driving is smooth. Keep it up!"]
         tips = tips[:3]
 
-        # Build natural message based on severity
         if severity == "green":
             message = "Great driving! Here are some tips to stay efficient."
         elif severity == "yellow":
@@ -190,7 +181,7 @@ def coach():
         else:
             message = "Your driving needs attention. Follow these tips closely."
 
-        payload = {
+        res_payload = {
             "message": message,
             "tips": tips,
             "severity": severity,
@@ -200,7 +191,7 @@ def coach():
 
     except Exception as e:
         logger.error(f"Coach endpoint error: {e}")
-        payload = {
+        res_payload = {
             "message": "Coaching engine encountered an issue.",
             "tips": ["Maintain steady speed and smooth braking."],
             "severity": "yellow",
@@ -212,9 +203,9 @@ def coach():
         from backend.db import sessions_collection
         sessions_collection.update_one(
             {"session_id": session_id},
-            {"$set": {"tips": payload.get("tips", [])}}
+            {"$set": {"tips": res_payload.get("tips", [])}}
         )
     else:
-        _cache_set(cache_key, payload)
+        _cache_set(cache_key, res_payload)
         
-    return jsonify(payload)
+    return res_payload

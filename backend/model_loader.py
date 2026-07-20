@@ -1,6 +1,6 @@
 """
 backend/model_loader.py
-Loads and caches all trained models perfectly ONCE at Flask startup.
+Loads and caches all trained models perfectly ONCE at FastAPI startup.
 """
 
 from __future__ import annotations
