@@ -1,10 +1,10 @@
-# DriveIQ — AI-Powered Driving Analysis & Coaching Dashboard
+# DriveIQ — AI Powered Driving Analysis & Coaching Dashboard
 
 DriveIQ is a modern, comprehensive AI-powered platform designed to analyze driving runs, evaluate driver safety and efficiency, and provide real-time, context-aware coaching feedback. It leverages a hybrid system combining Computer Vision (CV), Machine Learning (ML), and Large Language Models (LLMs) to scan driver behavior and offer recommendations.
 
 ---
 
-## 🚀 Key Features
+## Key Features
 
 * **Computer Vision Processing**: Motion estimation with Optical Flow and vehicle/obstacle tracking via YOLOv8.
 * **Predictive ML scoring**: An XGBoost model classifies the severity of driving runs and generates safety scores based on telemetry features.
@@ -14,7 +14,7 @@ DriveIQ is a modern, comprehensive AI-powered platform designed to analyze drivi
 
 ---
 
-## 🛠️ Technology Stack
+## Technology Stack
 
 ### **Frontend**
 * **Framework**: React.js with Vite
@@ -35,7 +35,7 @@ DriveIQ is a modern, comprehensive AI-powered platform designed to analyze drivi
 
 ---
 
-## 📁 Repository Structure
+## Repository Structure
 
 ```text
 ├── backend/                # FastAPI REST API implementation
