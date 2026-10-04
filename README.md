@@ -20,14 +20,13 @@ DriveIQ is a modern, comprehensive AI powered platform designed to analyze drivi
 
 ### **Frontend**
 * **Markup & Structure**: Plain HTML5 & CSS3
-* **Scripting**: Pure Vanilla JavaScript (0 runtime dependencies, 0 external UI frameworks, zero React)
+* **Scripting**: Pure Vanilla JavaScript (0 runtime dependencies, 0 external UI frameworks, zero React, zero Node.js)
 * **Visualizations**: Native Browser SVG and CSS vector graphics (Score Gauge and Trend Line)
-* **Dev Server & Bundling**: Vite (for local dev server and reverse proxying `/api` to the backend)
 * **API Client**: Native Browser `fetch`
 
 ### **Backend**
-* **Framework**: FastAPI (Python) with CORS
-* **Database**: MongoDB
+* **Framework**: FastAPI (Python) serving both the API and Dashboard static files
+* **Database**: MongoDB (via `pymongo`)
 * **Machine Learning & CV**:
   * XGBoost & scikit-learn (Scoring model)
   * PyTorch & Ultralytics YOLOv8 (Vehicle detection)
@@ -37,6 +36,40 @@ DriveIQ is a modern, comprehensive AI powered platform designed to analyze drivi
 * **Security**: JWT (`PyJWT`), `bcrypt`
 * **Report Generation**: ReportLab (PDF)
 
+---
+
+## Getting Started
+
+### Prerequisites
+* Python 3.10+
+* MongoDB (optional for local guest mode; required for persistent trip history and JWT auth)
+
+---
+
+### Quick Start (Single Command)
+
+1. **Install Python dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. **Configure environment variables (optional)**:
+   Create a `.env` file in the root directory:
+   ```env
+   MONGO_URI=mongodb://localhost:27017/DriveIQ
+   JWT_SECRET=your_secret_key_at_least_32_characters_long
+   GEMINI_API_KEY=your_gemini_api_key_here
+   PORT=5000
+   ```
+
+3. **Start the application**:
+   ```bash
+   python run.py
+   ```
+   * **Dashboard UI**: `http://localhost:5000`
+   * **Interactive API Docs**: `http://localhost:5000/docs`
+
+---
 
 ## Repository Structure
 
@@ -55,8 +88,7 @@ DriveIQ is a modern, comprehensive AI powered platform designed to analyze drivi
 │   ├── index.html          # Main HTML entrypoint
 │   ├── index.css           # Styling rules
 │   ├── app.js              # Application logic, visual renderers, and event management
-│   ├── vite.config.js      # Dev server & reverse proxy configuration
-│   └── package.json        # Frontend configuration (zero runtime dependencies)
+│   └── favicon.svg         # Dashboard icon
 ├── cv/                     # Computer Vision pipelines
 │   ├── cv_pipeline.py      # Combines optical flow & YOLO tracking
 │   ├── optical_flow.py     # Dense/Sparse motion analysis
@@ -65,6 +97,7 @@ DriveIQ is a modern, comprehensive AI powered platform designed to analyze drivi
 │   ├── predictor.py        # XGBoost scoring inference script
 │   └── train_xgboost.py    # Training & evaluation script
 ├── pipeline/               # Data ingestion & dataset creation scripts
+├── run.py                  # Single-command application launcher
 ├── requirements.txt        # Python pip dependencies
 └── README.md               # Project documentation (this file)
 ```

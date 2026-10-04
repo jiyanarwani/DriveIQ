@@ -76,13 +76,25 @@ def extract_flow_features(
     prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)
     curr_gray = cv2.cvtColor(curr_frame, cv2.COLOR_BGR2GRAY)
 
+    # Downscale for 15x faster Farneback optical flow computation
+    h_orig, w_orig = prev_gray.shape
+    if w_orig > 320:
+        scale = 320.0 / w_orig
+        new_h = int(h_orig * scale)
+        p_in = cv2.resize(prev_gray, (320, new_h), interpolation=cv2.INTER_AREA)
+        c_in = cv2.resize(curr_gray, (320, new_h), interpolation=cv2.INTER_AREA)
+    else:
+        scale = 1.0
+        p_in, c_in = prev_gray, curr_gray
+
     # Compute dense optical flow
     flow = cv2.calcOpticalFlowFarneback(
-        prev_gray, curr_gray, None, **FARNEBACK_PARAMS
-    )  # shape: (H, W, 2) — [x-flow, y-flow]
+        p_in, c_in, None, **FARNEBACK_PARAMS
+    )  # shape: (new_h, 320, 2) — [x-flow, y-flow]
 
-    fx = flow[..., 0]   # horizontal component
-    fy = flow[..., 1]   # vertical component
+    # Rescale flow vectors back to original pixel displacement scale
+    fx = flow[..., 0] / scale   # horizontal component
+    fy = flow[..., 1] / scale   # vertical component
 
     # Magnitude of each flow vector
     magnitude = np.sqrt(fx ** 2 + fy ** 2)

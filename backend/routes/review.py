@@ -161,8 +161,9 @@ def _try_recover_truncated_json(raw: str) -> dict | None:
 
 def _extract_review_fast_features(
     video_path: Path,
-    sample_every: int = 3,
+    sample_every: int = 4,
     max_frames_per_video: int | None = None,
+    progress_cb = None,
 ) -> pd.DataFrame:
     """Review extractor using the real CV pipeline (YOLO + optical flow)."""
     from cv.cv_pipeline import cv_pipeline
@@ -176,6 +177,11 @@ def _extract_review_fast_features(
     fps = float(cap.get(cv2.CAP_PROP_FPS) or 30.0)
     if fps <= 0:
         fps = 30.0
+
+    total_frames = float(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0)
+    total_samples = max(1, int(total_frames / sample_every)) if total_frames > 0 else 100
+    if max_frames_per_video is not None:
+        total_samples = min(total_samples, max_frames_per_video)
 
     rows: list[dict] = []
     prev_frame: np.ndarray | None = None
@@ -248,6 +254,10 @@ def _extract_review_fast_features(
         sampled_count += 1
         read_frame_idx += 1
 
+        if progress_cb and (sampled_count % 5 == 0 or sampled_count == 1):
+            pct = min(90, max(1, int((sampled_count / total_samples) * 90)))
+            progress_cb(pct, f"Analyzing video frames ({pct}%)...")
+
         if max_frames_per_video is not None and sampled_count >= max_frames_per_video:
             break
 
@@ -300,12 +310,23 @@ def _process_video_task(task_id: str, temp_path: Path, scoring_mode: str) -> Non
     t0 = time.perf_counter()
     logger.info(f"Background task {task_id} started processing")
 
+    def update_progress(pct: int, msg: str):
+        if task_id in _review_tasks:
+            _review_tasks[task_id]["progress"] = pct
+            _review_tasks[task_id]["message"] = msg
+
     try:
-        sample_every = 3
+        sample_every = 4
         window_size = 20
         stride = 15
 
-        frames_df = _extract_review_fast_features(temp_path, sample_every=sample_every, max_frames_per_video=None)
+        update_progress(5, "Scanning video frames...")
+        frames_df = _extract_review_fast_features(
+            temp_path,
+            sample_every=sample_every,
+            max_frames_per_video=None,
+            progress_cb=update_progress,
+        )
         logger.info(
             "Task %s extract_done rows=%s elapsed_ms=%.1f",
             task_id,
@@ -467,11 +488,14 @@ def _process_video_task(task_id: str, temp_path: Path, scoring_mode: str) -> Non
             (time.perf_counter() - t_score) * 1000.0,
         )
 
+        update_progress(94, "Scoring driving segments...")
         session_summary = _generate_session_summary_gemini(windows_out, duration_sec)
         logger.info("Task %s session_summary error=%s", task_id, session_summary.get("error"))
 
         _review_tasks[task_id] = {
             "status": "completed",
+            "progress": 100,
+            "message": "Completed",
             "error": None,
             "result": {
                 "windows": windows_out,
@@ -490,6 +514,8 @@ def _process_video_task(task_id: str, temp_path: Path, scoring_mode: str) -> Non
         logger.exception(f"Background task {task_id} failed: {ex}")
         _review_tasks[task_id] = {
             "status": "failed",
+            "progress": 0,
+            "message": "Analysis failed",
             "error": str(ex),
             "result": None
         }
@@ -516,6 +542,8 @@ async def review_video(
     task_id = str(uuid.uuid4())
     _review_tasks[task_id] = {
         "status": "processing",
+        "progress": 0,
+        "message": "Uploading video...",
         "error": None,
         "result": None
     }
@@ -534,6 +562,8 @@ async def review_video(
         logger.error(f"Failed to save uploaded video file: {io_err}")
         _review_tasks[task_id] = {
             "status": "failed",
+            "progress": 0,
+            "message": "Failed to save video",
             "error": f"Failed to save uploaded video: {io_err}",
             "result": None
         }
@@ -554,6 +584,8 @@ def get_review_status(task_id: str) -> dict:
     return {
         "task_id": task_id,
         "status": task["status"],
+        "progress": task.get("progress", 0),
+        "message": task.get("message", "Processing video..."),
         "error": task["error"],
         "result": task["result"]
     }

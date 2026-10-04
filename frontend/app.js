@@ -3,7 +3,7 @@
  * Pure Vanilla JavaScript (No React, 0 External Framework Dependencies)
  */
 
-const API = '' // Same-origin via Vite / reverse proxy
+const API = '' // Same-origin direct backend API
 const POLL_MS = 2500
 const HEALTH_POLL_MS = 15000
 const BACKEND_FAIL_THRESHOLD = 3
@@ -1112,8 +1112,10 @@ async function runReviewAnalysis() {
           el.reviewStatus.style.display = 'none'
           el.btnRunReview.disabled = false
         } else {
-          el.reviewStatus.textContent = 'Processing video frames (running YOLO & optical flow)...'
-          setTimeout(pollTask, 1500)
+          const pct = statusData.progress || 0
+          const msg = statusData.message || (pct > 0 ? `Analyzing video frames (${pct}%)...` : 'Processing video frames (running YOLO & optical flow)...')
+          el.reviewStatus.textContent = msg
+          setTimeout(pollTask, 1200)
         }
       } catch (err) {
         el.reviewError.style.display = 'block'

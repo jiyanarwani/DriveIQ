@@ -63,7 +63,7 @@ def extract_yolo_features(frame: np.ndarray, conf_threshold: float = 0.4) -> dic
     model = get_yolo_model()
     frame_area = frame.shape[0] * frame.shape[1]
 
-    results = model(frame, conf=conf_threshold, verbose=False)[0]
+    results = model(frame, conf=conf_threshold, imgsz=320, verbose=False)[0]
     boxes   = results.boxes
 
     vehicle_count   = 0

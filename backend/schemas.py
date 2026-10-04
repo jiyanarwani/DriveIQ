@@ -131,5 +131,7 @@ class ReviewResult(BaseModel):
 class ReviewStatusResponse(BaseModel):
     task_id: str
     status: str
+    progress: int = 0
+    message: str | None = None
     error: str | None = None
     result: ReviewResult | None = None

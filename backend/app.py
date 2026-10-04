@@ -28,7 +28,7 @@ if str(ROOT) not in sys.path:
 # CRITICAL: Import torch BEFORE cv2 to ensure torch's libomp loads first.
 try:
     import torch
-    torch.set_num_threads(1)
+    torch.set_num_threads(min(4, os.cpu_count() or 2))
 except (ImportError, OSError):
     pass
 
@@ -83,7 +83,7 @@ def create_app() -> FastAPI:
     # CORS configuration
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://localhost:3000"],
+        allow_origins=["*"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -97,10 +97,11 @@ def create_app() -> FastAPI:
     app.include_router(auth_router)
     app.include_router(dashboard_router)
 
-    from fastapi.responses import RedirectResponse
-    @app.get("/", include_in_schema=False)
-    def redirect_to_docs():
-        return RedirectResponse(url="/docs")
+    # Serve static frontend dashboard directly
+    from fastapi.staticfiles import StaticFiles
+    frontend_dir = ROOT / "frontend"
+    if frontend_dir.exists():
+        app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
 
     return app
 
