@@ -11,7 +11,7 @@ DriveIQ is a modern, comprehensive AI powered platform designed to analyze drivi
 * **Generative AI Coaching**: Integration with Google Gemini (`gemini-2.5-flash` using the official `google-genai` SDK) translating telemetry analysis into practical, encouraging driving feedback.
 * **Async Video Review**: Upload driving videos for background processing (YOLO + Optical Flow + XGBoost) to generate detailed timeline stats.
 * **PDF Report Generation**: Download stylized PDF coaching reports containing journey performance metrics, Gemini feedback and significant infraction timelines (built with ReportLab).
-* **Immersive Dashboard**: A React-based web interface showing interactive telemetry timelines, active infraction overlays, 3D visualizations and performance statistics.
+* **Immersive Dashboard**: A React-based web interface showing interactive telemetry timelines, active infraction overlays, custom SVG gauges and performance statistics.
 * **User Authentication & Trip History**: Custom secure JWT authentication backed by MongoDB to track historic sessions.
 
 ---
@@ -19,10 +19,10 @@ DriveIQ is a modern, comprehensive AI powered platform designed to analyze drivi
 ## Technology Stack
 
 ### **Frontend**
-* **Framework**: React.js with Vite
-* **Styling**: Vanilla CSS
-* **Visualizations**: 3D rendering (React Three Fiber, Drei, Three.js) and 2D charts (Chart.js, React-Chartjs-2)
-* **API Client**: Axios
+* **Markup & Structure**: Plain HTML5 & CSS3
+* **Scripting**: Pure Vanilla JavaScript (zero UI runtime dependencies, zero React)
+* **Visualizations**: Native SVG and CSS telemetry gauges and trend charts
+* **API Client**: Native Browser `fetch`
 
 ### **Backend**
 * **Framework**: FastAPI (Python) with CORS
@@ -51,8 +51,10 @@ DriveIQ is a modern, comprehensive AI powered platform designed to analyze drivi
 │   ├── schemas.py          # Unified Pydantic schema validation models
 │   ├── scoring.py          # Processing metrics and scoring engine
 │   └── coach_llm.py        # Google Gemini API connector for coaching
-├── frontend/               # React + Vite client-side dashboard
-│   ├── src/                # Component logic, views, hooks, and context
+├── frontend/               # Plain HTML5 + CSS3 + Vanilla JS client-side dashboard
+│   ├── index.html          # Main HTML entrypoint
+│   ├── index.css           # Styling rules
+│   ├── app.js              # Application logic and event management
 │   └── package.json        # Frontend NPM configurations
 ├── cv/                     # Computer Vision pipelines
 │   ├── cv_pipeline.py      # Combines optical flow & YOLO tracking

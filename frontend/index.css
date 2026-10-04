@@ -1094,14 +1094,6 @@ input[type='file']::file-selector-button:hover {
   font-style: italic;
 }
 
-.three-wrap {
-  border: 1px solid var(--c-white-08);
-  border-radius: var(--r-md);
-  overflow: hidden;
-  background: var(--c-black-soft);
-  height: 240px;
-  margin-top: var(--s-2);
-}
 
 video {
   width: 100%;

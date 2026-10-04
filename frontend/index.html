@@ -1,17 +1,403 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>DriveIQ — Eco-Driving Coach</title>
-    <meta name="description" content="Real-time dashcam fuel efficiency coaching powered by AI" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DriveIQ — Eco-Driving Coach</title>
+  <meta name="description" content="Real-time dashcam fuel efficiency coaching powered by AI" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/index.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <span class="brand-mark">DQ</span>
+        <div class="brand-copy">
+          <span class="brand-name">DriveIQ</span>
+          <span class="brand-sub">Coaching Console</span>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav">
+        <button type="button" class="nav-item" id="nav-history">
+          <span class="nav-icon">01</span>
+          <span>Overview</span>
+        </button>
+        <button type="button" class="nav-item" id="nav-review">
+          <span class="nav-icon">02</span>
+          <span>Post-Drive Review</span>
+        </button>
+        <button type="button" class="nav-item active" id="nav-live">
+          <span class="nav-icon">03</span>
+          <span>Live Stream</span>
+        </button>
+        <button type="button" class="nav-item" id="nav-insights">
+          <span class="nav-icon">04</span>
+          <span>Insights</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="status-indicator">
+          <span class="status-dot bad" id="sidebar-status-dot"></span>
+          <span id="sidebar-status-text">Backend Degraded</span>
+        </div>
+        <span class="severity-badge severity-red" id="sidebar-status-badge">
+          schema: false | models: false
+        </span>
+      </div>
+    </aside>
+
+    <!-- Main Workspace -->
+    <div class="workspace">
+      <!-- Topbar -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <label class="search-shell" for="app-search">
+            <input
+              id="app-search"
+              type="search"
+              placeholder="Search modules, lessons, sessions"
+            />
+          </label>
+        </div>
+
+        <div class="topbar-right">
+          <button type="button" class="icon-btn" aria-label="Notifications">N</button>
+          <div class="profile-chip">
+            <span class="profile-dot" id="profile-dot"></span>
+            <div class="profile-meta">
+              <span class="profile-title" id="profile-title">Guest Driver</span>
+              <span class="profile-sub" id="profile-sub">Session saving disabled</span>
+            </div>
+          </div>
+          <button type="button" class="btn btn-primary" id="btn-auth">Login</button>
+        </div>
+      </header>
+
+      <!-- Health & Warning Banners -->
+      <div class="health-banner health-checking" id="health-banner">Checking backend health...</div>
+      <div class="health-banner health-degraded" id="session-warning" style="display:none"></div>
+      <div class="offline-controls" id="offline-controls" style="display:none">
+        <button type="button" class="btn" id="btn-reconnect">Retry Backend Connection</button>
+      </div>
+
+      <!-- Main Content Views -->
+      <main class="main-content">
+        <!-- Mode Switcher -->
+        <section class="mode-toggle">
+          <button type="button" class="mode-btn active" id="btn-mode-live">
+            Real-Time Live Mode
+          </button>
+          <button type="button" class="mode-btn" id="btn-mode-history">
+            Trip History
+          </button>
+          <button type="button" class="mode-btn" id="btn-mode-review">
+            Post-Drive Full Analysis
+          </button>
+        </section>
+
+        <!-- Mini Dashboard (Summary Strip) -->
+        <section class="stat-strip mt-3" id="mini-dashboard">
+          <article class="card stat-card">
+            <span class="card-title">Current Trip Score</span>
+            <strong class="card-value" id="mini-score">0</strong>
+            <span class="card-sub" id="mini-score-sub">Live streaming</span>
+          </article>
+          <article class="card stat-card">
+            <span class="card-title">Trip Duration</span>
+            <strong class="card-value" id="mini-duration">Live</strong>
+            <span class="card-sub">Time analyzed</span>
+          </article>
+          <article class="card stat-card">
+            <span class="card-title">Extraction Windows</span>
+            <strong class="card-value" id="mini-windows">—</strong>
+            <span class="card-sub">Analyzed segments</span>
+          </article>
+          <article class="card stat-card">
+            <span class="card-title">Estimated Fuel Saved</span>
+            <strong class="card-value" id="mini-fuel">—</strong>
+            <span class="card-sub">For this trip</span>
+          </article>
+        </section>
+
+        <!-- VIEW 1: Live Stream View -->
+        <section class="panel-card panel-live" id="live-view">
+          <div class="panel-head">
+            <div>
+              <h2 class="section-title">Live Dynamic Streaming</h2>
+              <p class="panel-subtitle">Run a direct frame stream and monitor live timeline coaching output.</p>
+              <button
+                type="button"
+                class="btn btn-ghost"
+                id="btn-scoring-mode"
+                style="margin-top: 8px; border: 1px solid var(--c-white-08); padding: 4px 12px; font-size: 11px;"
+              >
+                Mode: <span id="scoring-mode-text" style="color: var(--c-primary); font-weight: bold;">xgboost</span>
+              </button>
+            </div>
+            <div class="file-input-wrap">
+              <input type="file" id="live-file-input" accept="video/mp4" />
+              <button type="button" class="btn btn-primary" id="btn-start-stream" style="display:none">
+                Start Stream
+              </button>
+              <div id="live-complete-actions" style="display:none">
+                <span class="severity-badge severity-green" style="padding: 6px 14px; font-size: 12px;">✓ Stream Complete — Session Saved</span>
+                <button type="button" class="btn" id="btn-new-session" style="margin-left: 8px;">New Session</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Event Counters Strip -->
+          <div id="event-counter-panel" class="event-counter-panel" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 16px;">
+            <div class="card" style="padding: 12px; display: flex; flexDirection: column; gap: 4px;">
+              <span style="font-size: 11px; color: var(--c-white-46); text-transform: uppercase; letter-spacing: 0.05em;">Motion State</span>
+              <strong id="ev-motion-label" style="font-size: 18px; color: var(--c-white-46); font-weight: 700; text-transform: uppercase;">Idle</strong>
+            </div>
+            <div class="card" style="padding: 12px; display: flex; flexDirection: column; gap: 4px;">
+              <span style="font-size: 11px; color: var(--c-white-46); text-transform: uppercase; letter-spacing: 0.05em;">Hard Braking</span>
+              <strong id="ev-braking-count" style="font-size: 18px; color: var(--c-white-92); font-weight: 600;">0</strong>
+            </div>
+            <div class="card" style="padding: 12px; display: flex; flexDirection: column; gap: 4px;">
+              <span style="font-size: 11px; color: var(--c-white-46); text-transform: uppercase; letter-spacing: 0.05em;">Tailgating</span>
+              <strong id="ev-tailgating-count" style="font-size: 18px; color: var(--c-white-92); font-weight: 600;">0</strong>
+            </div>
+            <div class="card" style="padding: 12px; display: flex; flexDirection: column; gap: 4px;">
+              <span style="font-size: 11px; color: var(--c-white-46); text-transform: uppercase; letter-spacing: 0.05em;">Erratic Speed</span>
+              <strong id="ev-speed-count" style="font-size: 18px; color: var(--c-white-92); font-weight: 600;">0</strong>
+            </div>
+          </div>
+
+          <!-- Video & Live Trend Grid -->
+          <div class="grid-2">
+            <article class="video-card">
+              <div id="proximity-heatstrip-container"></div>
+              <div style="display: flex;">
+                <div class="video-card-media" style="flex: 1;">
+                  <div id="live-video-placeholder" class="video-placeholder">
+                    Upload an MP4 file to begin live frame-by-frame analysis.
+                  </div>
+                  <video id="live-video" muted style="display:none; width: 100%; height: auto; background: var(--c-black);"></video>
+                </div>
+                <div id="braking-meter-container"></div>
+              </div>
+              <div class="video-card-body">
+                <h3 class="video-card-title line-clamp-2">Real-Time Drive Session - Adaptive stream diagnostics</h3>
+                <div class="video-card-meta">
+                  <span id="live-status-meta">Awaiting stream start</span>
+                  <span id="live-clock-meta">0:00 / 0:00</span>
+                  <span id="live-events-meta">0 events</span>
+                </div>
+                <div class="progress-track">
+                  <div class="progress-fill" id="live-progress-fill" style="width: 0%;"></div>
+                </div>
+              </div>
+            </article>
+
+            <div class="stack-col">
+              <div id="live-trend-chart-container"></div>
+            </div>
+          </div>
+
+          <!-- Live Timeline Lessons -->
+          <article class="card timeline-card" style="margin-top: 16px;">
+            <div class="card-title">Live Timeline</div>
+            <div class="timeline-module">
+              <div class="timeline-module-head static">
+                <span class="timeline-module-title">Module 01 - Live Coaching Events</span>
+                <span class="timeline-module-count" id="live-lesson-count">0 lessons</span>
+              </div>
+              <div class="timeline-module-body expanded" id="live-timeline-list" style="max-height: 400px; overflow-y: auto; padding-right: 4px;">
+                <div class="empty-state">
+                  <p class="empty-state-text">Start stream to generate timeline lessons.</p>
+                </div>
+              </div>
+            </div>
+          </article>
+        </section>
+
+        <!-- VIEW 2: Review View -->
+        <section class="panel-card" id="review-view" style="display:none">
+          <div class="panel-head">
+            <div>
+              <h2 class="section-title">Trip Review</h2>
+              <p class="panel-subtitle">Upload a drive and navigate structured modules, lessons, and video moments.</p>
+            </div>
+            <button type="button" class="btn" id="btn-export-report" disabled>
+              Export Report
+            </button>
+          </div>
+
+          <div class="review-panel">
+            <div class="file-input-wrap review-upload-row">
+              <input type="file" accept="video/mp4" id="review-file-input" />
+              <button type="button" class="btn btn-primary" id="btn-run-review">
+                Start Full Review Analysis
+              </button>
+            </div>
+            <div id="review-status" class="status-msg" style="display:none"></div>
+            <div id="review-error" class="error-msg" style="display:none"></div>
+
+            <div id="review-results-area" style="display:none">
+              <div class="grid-2 review-top-grid">
+                <article class="video-card">
+                  <div class="video-card-media">
+                    <video id="review-video" controls style="width: 100%; height: auto; background: var(--c-black);"></video>
+                  </div>
+                  <div class="video-card-body">
+                    <h3 class="video-card-title line-clamp-2">Post-Journey Video Timeline Review</h3>
+                    <div class="video-card-meta">
+                      <span id="review-clock-meta">0:00 / 0:00</span>
+                      <span id="review-windows-meta">0 windows</span>
+                    </div>
+                    <div class="progress-track">
+                      <div class="progress-fill" id="review-progress-fill" style="width: 0%;"></div>
+                    </div>
+                  </div>
+                </article>
+
+                <article class="card timeline-card">
+                  <div class="card-title">Structured Timeline</div>
+                  <div class="timeline-collection" id="review-timeline-modules" style="overflow-y: auto; max-height: 400px; padding-right: 4px;">
+                  </div>
+                </article>
+              </div>
+
+              <section class="grid-2" style="margin-top: 16px;">
+                <article class="card">
+                  <div class="card-title">Detailed Trip Report</div>
+                  <div class="report-copy" id="review-report-copy">
+                  </div>
+                </article>
+                <div id="review-trend-chart-container"></div>
+              </section>
+            </div>
+          </div>
+        </section>
+
+        <!-- VIEW 3: Trip History & Analytics View -->
+        <section id="history-view" style="display:none">
+          <!-- Selected Trip Inspection Card -->
+          <div id="history-trip-inspection" style="display:none; margin-bottom: 24px;"></div>
+
+          <!-- Account Lifetime Metrics -->
+          <section class="stat-strip" id="main-dashboard">
+            <article class="card stat-card">
+              <span class="card-title">Mean Eco Score</span>
+              <strong class="card-value" id="hist-mean-score">—</strong>
+              <span class="card-sub">Overall account average</span>
+            </article>
+            <article class="card stat-card">
+              <span class="card-title">Lowest Score</span>
+              <strong class="card-value" id="hist-lowest-score">—</strong>
+              <span class="card-sub">Lowest recorded session</span>
+            </article>
+            <article class="card stat-card">
+              <span class="card-title">Total Trips</span>
+              <strong class="card-value" id="hist-total-trips">—</strong>
+              <span class="card-sub">Lifetime drive sessions</span>
+            </article>
+            <article class="card stat-card">
+              <span class="card-title">Trips This Week</span>
+              <strong class="card-value" id="hist-trips-week">—</strong>
+              <span class="card-sub">Last 7 days</span>
+            </article>
+          </section>
+
+          <!-- Saved Trips Table -->
+          <article class="card" style="margin-top: 16px;">
+            <div class="card-title">Saved Driving Sessions</div>
+            <div style="overflow-x: auto;">
+              <table class="feat-table" id="trips-table">
+                <thead>
+                  <tr style="text-align: left; color: var(--c-white-46); font-size: 11px; text-transform: uppercase;">
+                    <th style="padding: 8px 0;">Date & Time</th>
+                    <th style="padding: 8px 0;">Score</th>
+                    <th style="padding: 8px 0;">Duration</th>
+                    <th style="padding: 8px 0;">Top Infraction</th>
+                    <th style="padding: 8px 0; text-align: right;">Action</th>
+                  </tr>
+                </thead>
+                <tbody id="trips-table-body">
+                  <tr>
+                    <td colspan="5" style="text-align:center; padding: 24px 0; color: var(--c-white-46);">
+                      No saved trips found. Log in and record trips to see historical records.
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+        </section>
+
+        <!-- Insights Section: Score Gauge & Feature Table -->
+        <section class="score-feature-grid" id="insights" style="margin-top: 24px;">
+          <div id="score-gauge-container"></div>
+          <div id="feature-table-container"></div>
+        </section>
+
+        <!-- Coaching Panel Section -->
+        <section style="margin-top: 16px;">
+          <div id="coaching-panel-container"></div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <!-- Authentication Modal -->
+  <div class="modal-backdrop" id="auth-modal" style="display:none">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-title" id="auth-modal-title">Sign In</span>
+        <button type="button" class="modal-close" id="btn-close-auth" aria-label="Close">x</button>
+      </div>
+
+      <div class="form-error mb-2" id="auth-error" style="display:none"></div>
+
+      <form class="form-group" id="auth-form">
+        <div>
+          <label class="label" for="auth-email">Email</label>
+          <input
+            id="auth-email"
+            class="input"
+            type="email"
+            placeholder="you@example.com"
+            required
+          />
+        </div>
+        <div>
+          <label class="label" for="auth-password">Password</label>
+          <input
+            id="auth-password"
+            class="input"
+            type="password"
+            placeholder="password"
+            required
+          />
+        </div>
+        <button
+          type="submit"
+          class="btn btn-primary btn-full"
+          id="auth-submit-btn"
+        >
+          Sign In
+        </button>
+      </form>
+
+      <div class="modal-footer">
+        <button class="link-btn" type="button" id="auth-toggle-btn">
+          Need an account? Register.
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Vanilla JavaScript App Entrypoint -->
+  <script type="module" src="/app.js"></script>
+</body>
 </html>
