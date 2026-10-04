@@ -1,6 +1,6 @@
 # DriveIQ — AI Powered Driving Analysis & Coaching Dashboard
 
-DriveIQ is a modern, comprehensive AI powered platform designed to analyze driving runs, evaluate driver safety and efficiency, and provide real-time, context-aware coaching feedback. It leverages a hybrid system combining Computer Vision (CV), Machine Learning (ML), and Large Language Models (LLMs) to scan driver behavior and offer recommendations.
+DriveIQ is a modern, comprehensive AI powered platform designed to analyze driving runs, evaluate driver safety and efficiency, and provide real-time, context-aware coaching feedback. It leverages a hybrid system combining Computer Vision (CV), Machine Learning (ML) and Large Language Models (LLMs) to scan driver behavior and offer recommendations.
 
 ---
 
@@ -27,7 +27,7 @@ DriveIQ is a modern, comprehensive AI powered platform designed to analyze drivi
 
 ### **Backend**
 * **Framework**: FastAPI (Python) with CORS
-* **Database**: MongoDB (via `pymongo`)
+* **Database**: MongoDB
 * **Machine Learning & CV**:
   * XGBoost & scikit-learn (Scoring model)
   * PyTorch & Ultralytics YOLOv8 (Vehicle detection)
@@ -37,58 +37,6 @@ DriveIQ is a modern, comprehensive AI powered platform designed to analyze drivi
 * **Security**: JWT (`PyJWT`), `bcrypt`
 * **Report Generation**: ReportLab (PDF)
 
----
-
-## Getting Started
-
-### Prerequisites
-* Python 3.10+
-* Node.js 18+ (for running the frontend dev server)
-* MongoDB (optional for local guest mode; required for persistent trip history and JWT auth)
-
----
-
-### Backend Setup
-
-1. **Install Python dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. **Configure environment variables (optional)**:
-   Create a `.env` file in the root directory:
-   ```env
-   MONGO_URI=mongodb://localhost:27017/DriveIQ
-   JWT_SECRET=your_secret_key_at_least_32_characters_long
-   GEMINI_API_KEY=your_gemini_api_key_here
-   PORT=5000
-   ```
-
-3. **Start the FastAPI backend server**:
-   ```bash
-   python backend/app.py
-   ```
-   * API Server will run at: `http://localhost:5000`
-   * Interactive Swagger documentation: `http://localhost:5000/docs`
-
----
-
-### Frontend Setup
-
-1. **Install dev dependencies**:
-   ```bash
-   cd frontend
-   npm install
-   ```
-
-2. **Start the frontend server**:
-   ```bash
-   npm run dev
-   ```
-   * Dashboard will run at: `http://localhost:5173`
-   * API calls to `/api` are automatically proxied to the backend at `http://localhost:5000`.
-
----
 
 ## Repository Structure
 
