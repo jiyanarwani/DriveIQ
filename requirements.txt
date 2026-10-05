@@ -11,14 +11,8 @@ joblib
 xgboost
 shap
 
-# LLM Fine-tuning / Inference
+# Deep Learning & Sequential Models
 torch
-transformers
-datasets
-accelerate
-sentencepiece
-protobuf
-evaluate
 
 # Computer Vision
 ultralytics       # YOLOv8
@@ -30,9 +24,6 @@ uvicorn
 python-multipart
 pydantic-settings
 aiofiles
-
-# Claude API (coaching messages)
-anthropic
 
 # Google Gemini API (coaching + session summary)
 google-genai
