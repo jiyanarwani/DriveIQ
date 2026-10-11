@@ -274,15 +274,6 @@ def _extract_review_fast_features(
     return pd.DataFrame(rows)
 
 
-def _heuristic_score_from_features(features: dict) -> float:
-    score = 85.0
-    score -= float(features.get("proximity_score", 0.0)) * 30.0
-    score -= float(features.get("mean_flow", 0.0)) * 8.0
-    score -= float(features.get("flow_variance", 0.0)) * 10.0
-    score -= float(features.get("braking_ratio", features.get("braking_flag", 0.0))) * 12.0
-    score -= float(features.get("lane_change_ratio", features.get("lane_change_flag", 0.0))) * 10.0
-    score -= float(features.get("pedestrian_ratio", features.get("pedestrian_flag", 0.0))) * 5.0
-    return max(0.0, min(100.0, score))
 
 
 def _evaluate_rules(score: float, features: dict, events: list[str]) -> list[str]:
@@ -425,21 +416,24 @@ def _process_video_task(task_id: str, temp_path: Path, scoring_mode: str) -> Non
             }
             all_feature_dicts.append((row, feature_dict))
 
-        use_xgb = scoring_mode == "xgboost" and xgb is not None and scaler is not None
-        actual_score_source = "xgboost" if use_xgb else "event_ema"
+        schema_valid = bool(models.get("schema_valid", False))
+        xgb_ready = (xgb is not None and scaler is not None and schema_valid)
+        use_xgb = (scoring_mode != "event_rules") and xgb_ready
 
         if use_xgb:
             from cv.cv_pipeline import feature_vector_for_xgb
             prev_smoothed_xgb = 90.0
             for i, (row, feature_dict) in enumerate(all_feature_dicts):
                 _, events = score_window(feature_dict)
+                win_score_source = "xgboost"
                 try:
                     xgb_input = feature_vector_for_xgb(feature_dict, scaler)
                     raw_score = float(xgb.predict(xgb_input)[0])
                     raw_score = max(0.0, min(100.0, raw_score))
                 except Exception as e:
-                    logger.warning(f"XGBoost predict failed for window {i}: {e}")
+                    logger.warning(f"XGBoost predict failed for window {i}: {e}. Falling back to rule-based.")
                     raw_score, _ = score_window(feature_dict)
+                    win_score_source = "event_rules_fallback"
 
                 smoothed = 0.6 * raw_score + 0.4 * prev_smoothed_xgb
                 smoothed = max(0.0, min(100.0, smoothed))
@@ -456,10 +450,13 @@ def _process_video_task(task_id: str, temp_path: Path, scoring_mode: str) -> Non
                     "severity": severity,
                     "top_issue": top_issue,
                     "coach_note": coach_note,
-                    "score_source": "xgboost",
+                    "score_source": win_score_source,
                     "events": events,
                 })
         else:
+            fallback_source = "event_rules" if scoring_mode == "event_rules" else "event_rules_fallback"
+            if scoring_mode != "event_rules":
+                logger.warning("XGBoost unavailable or schema mismatch in review task; falling back to rule-based EMA scoring.")
             scored = score_windows_with_ema([fd for _, fd in all_feature_dicts])
             for i, (row, feature_dict) in enumerate(all_feature_dicts):
                 result = scored[i]
@@ -477,7 +474,7 @@ def _process_video_task(task_id: str, temp_path: Path, scoring_mode: str) -> Non
                     "severity": severity,
                     "top_issue": top_issue,
                     "coach_note": coach_note,
-                    "score_source": "event_ema",
+                    "score_source": fallback_source,
                     "events": events,
                 })
 
@@ -532,7 +529,7 @@ def _process_video_task(task_id: str, temp_path: Path, scoring_mode: str) -> Non
 async def review_video(
     background_tasks: BackgroundTasks,
     video: UploadFile = File(...),
-    scoring_mode: str = Form("event_rules")
+    scoring_mode: str = Form("xgboost")
 ) -> dict:
     logger.info("Multipart review upload received.")
     

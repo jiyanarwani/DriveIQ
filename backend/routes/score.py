@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 
 from backend.db import save_session, sessions_collection
 from backend.auth import verify_token, get_current_user
-from backend.scoring import score_window, EMA_ALPHA, BASE_SCORE
+from backend.scoring import score_window, score_window_with_engine, EMA_ALPHA, BASE_SCORE
 from backend.model_loader import load_models
 from backend.schemas import ScoreRequest, ScoreResponse, TripHistoryItem, TimelineFrame
 
@@ -65,14 +65,6 @@ def _vision_like_features_from_telemetry(telemetry: dict) -> dict:
     }
 
 
-def _heuristic_score_from_features(features: dict) -> float:
-    score = 85.0
-    score -= float(features.get("proximity_score", 0.0)) * 30.0
-    score -= float(features.get("mean_flow", 0.0)) * 8.0
-    score -= float(features.get("flow_variance", 0.0)) * 10.0
-    score -= float(features.get("braking_ratio", features.get("braking_flag", 0))) * 12.0
-    score -= float(features.get("lane_change_ratio", features.get("lane_change_flag", 0))) * 10.0
-    return max(0.0, min(100.0, score))
 
 
 def _resolve_session(payload: ScoreRequest, x_session_id: str | None = None) -> str:
@@ -156,15 +148,12 @@ def score(
             auth_error = "malformed_authorization_header"
             logger.warning("Auth failed for /api/v1/score: malformed_authorization_header")
 
-        # Fail fast if runtime schema/model state is invalid.
+        # Load models (non-blocking fallback to rule-based if unavailable)
         models = load_models()
         if not bool(models.get("schema_valid", False)):
-            raise HTTPException(
-                status_code=503,
-                detail={
-                    "error": "schema_mismatch",
-                    "details": models.get("schema_error"),
-                }
+            logger.warning(
+                "XGBoost runtime schema not verified (%s). Rule-based scoring will be used as fallback.",
+                models.get("schema_error"),
             )
         
         cv_features = _vision_like_features_from_telemetry(telemetry)
@@ -196,31 +185,14 @@ def score(
                 elif k in ratio_keys:
                     feature_dict[k] = max(0.0, min(1.0, float(v)))
         
-        # Always detect events for the timeline
-        _, events = score_window(feature_dict)
-
-        # Choose scoring path
-        score_source = "event_rules"
-        if scoring_mode == "xgboost":
-            xgb = models.get("xgb")
-            scaler = models.get("scaler")
-            if xgb is not None and scaler is not None:
-                try:
-                    from cv.cv_pipeline import feature_vector_for_xgb
-                    xgb_input = feature_vector_for_xgb(feature_dict, scaler)
-                    raw_score = float(xgb.predict(xgb_input)[0])
-                    raw_score = max(0.0, min(100.0, raw_score))
-                    score_source = "xgboost"
-                except Exception as e:
-                    logger.warning(f"XGBoost prediction failed, falling back to event_rules: {e}")
-                    raw_score, _ = score_window(feature_dict)
-                    score_source = "event_rules_fallback"
-            else:
-                logger.warning("XGBoost model not loaded, falling back to event_rules")
-                raw_score, _ = score_window(feature_dict)
-                score_source = "event_rules_fallback"
-        else:
-            raw_score, _ = score_window(feature_dict)
+        # Dual-tier scoring engine:
+        # After the 8 features are prepared, XGBoost is the primary predictor.
+        # Rule-based scoring is used only if XGBoost fails or is unavailable.
+        raw_score, events, score_source = score_window_with_engine(
+            features=feature_dict,
+            models=models,
+            scoring_mode=scoring_mode,
+        )
 
         # Apply per-session EMA smoothing for live mode stability.
         last_score_ts = _LAST_SCORE_TS_BY_SESSION.get(session_id)

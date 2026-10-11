@@ -60,7 +60,7 @@ class ScoreRequest(BaseModel):
     telemetry: dict = {}
     frame_b64: str | None = None
     prev_frame_b64: str | None = None
-    scoring_mode: str = "event_rules"
+    scoring_mode: str = "xgboost"
     session_id: str | None = None
     session_started_at: str | None = None
 

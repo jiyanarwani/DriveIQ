@@ -19,14 +19,13 @@ def health_check() -> dict:
 
     core_models_loaded = all(models.get(k) is not None for k in core_required)
     schema_valid = bool(models.get("schema_valid", False))
-    predictor_loaded = models.get("predictor") is not None
 
     models_loaded = core_models_loaded and schema_valid
 
     coach_ready = True
     score_ready = models_loaded
     overall_ready = score_ready and coach_ready
-    degraded = not overall_ready or not predictor_loaded
+    degraded = not overall_ready
 
     # Check MongoDB status
     mongo_ok, mongo_error = is_mongo_available()
@@ -48,7 +47,7 @@ def health_check() -> dict:
         "core_models_loaded": core_models_loaded and schema_valid,
         "schema_valid": schema_valid,
         "schema_error": models.get("schema_error"),
-        "predictor_loaded": predictor_loaded,
+        "predictor_loaded": False,
         "missing_core_models": [k for k in core_required if models.get(k) is None],
         "score_ready": score_ready,
         "coach_ready": coach_ready,

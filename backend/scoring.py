@@ -1,26 +1,22 @@
 """
 backend/scoring.py
-Event-Based Deduction Scoring Engine
+Dual-Tier Scoring Engine: XGBoost on 8 Features with Rule-Based Fallback
 
-Instead of relying on XGBoost regression (which produces erratic scores from
-noisy CV features), this module scores driving using deterministic event
-detection with confidence thresholds.
-
-How it works:
-  1. Each window starts at a BASE_SCORE (90).
-  2. Specific driving infractions are detected by checking CV features
-     against safety thresholds. Only values that exceed the threshold
-     trigger a deduction.
-  3. Sustained clean driving earns a small bonus (up to +5).
-  4. For chronological sequences (review mode), an Exponential Moving
-     Average (EMA) is applied to smooth the curve.
-
-This matches how production telematics systems (Samsara, Root, Progressive)
-actually score driving behavior.
+Architecture:
+  1. Primary Scorer: XGBoost Regression Model
+     After the 8 core CV and telemetry features are extracted
+     (mean_flow, flow_variance, braking_ratio, lane_change_ratio,
+      proximity_score, vehicle_density, pedestrian_ratio, low_motion_ratio),
+     XGBoost is evaluated first as the primary eco-driving predictor.
+  2. Fallback Scorer: Event-Based Deduction Engine
+     Only if XGBoost is unavailable, missing, schema-mismatched, or fails
+     during inference, the deterministic rule-based event deduction engine
+     is used as the safety fallback.
 """
 
 from __future__ import annotations
 import logging
+import numpy as np
 
 logger = logging.getLogger("driveiq.scoring")
 
@@ -75,6 +71,67 @@ def score_window(features: dict) -> tuple[float, list[str]]:
 
     score = max(MIN_SCORE, min(MAX_SCORE, score))
     return score, events
+
+
+def score_features_xgboost(features: dict, xgb, scaler) -> float:
+    """
+    Score driving features using trained XGBoost model on the 8 features.
+
+    Features used (exact 8 schema):
+      mean_flow, flow_variance, braking_ratio, lane_change_ratio,
+      proximity_score, vehicle_density, pedestrian_ratio, low_motion_ratio
+    """
+    from cv.cv_pipeline import feature_vector_for_xgb
+
+    xgb_input = feature_vector_for_xgb(features, scaler)
+    raw_score = float(xgb.predict(xgb_input)[0])
+    return max(MIN_SCORE, min(MAX_SCORE, raw_score))
+
+
+def score_window_with_engine(
+    features: dict,
+    models: dict | None = None,
+    scoring_mode: str = "xgboost"
+) -> tuple[float, list[str], str]:
+    """
+    Score a feature window using the dual-tier architecture:
+    1. Always detect safety events for UI/timeline.
+    2. Primary: Predict eco score using XGBoost on the 8 extracted features.
+    3. Fallback: Only if XGBoost is unavailable, schema is invalid, or
+       prediction raises an exception, fall back to rule-based event deductions.
+
+    Returns:
+        (score, events, score_source)
+        where score_source is one of:
+          - "xgboost"
+          - "event_rules" (if explicitly requested)
+          - "event_rules_fallback" (if XGBoost could not run)
+    """
+    # 1. Rule-based evaluation (always run to detect events)
+    rule_score, events = score_window(features)
+
+    # If caller explicitly asked for rule-based, use it directly
+    if scoring_mode == "event_rules":
+        return rule_score, events, "event_rules"
+
+    # 2. Primary: evaluate XGBoost on the 8 features
+    if models:
+        xgb = models.get("xgb")
+        scaler = models.get("scaler")
+        schema_valid = bool(models.get("schema_valid", False))
+
+        if schema_valid and xgb is not None and scaler is not None:
+            try:
+                raw_score = score_features_xgboost(features, xgb, scaler)
+                return raw_score, events, "xgboost"
+            except Exception as e:
+                logger.warning("XGBoost prediction failed on 8 features (%s); falling back to rule-based.", e)
+        else:
+            schema_err = models.get("schema_error", "models_not_loaded")
+            logger.warning("XGBoost unavailable or schema mismatch (%s); falling back to rule-based.", schema_err)
+
+    # 3. Fallback: only if XGBoost doesn't work
+    return rule_score, events, "event_rules_fallback"
 
 
 def score_windows_with_ema(window_features_list: list[dict]) -> list[dict]:
